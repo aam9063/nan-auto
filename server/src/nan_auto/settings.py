@@ -27,3 +27,4 @@ class Settings(BaseSettings):
     breaker_threshold: int = 3
     breaker_cooldown_s: float = 60.0
     key_concurrency_limit: int = 8
+    quota_cooldown_s: float = 3600.0

@@ -81,19 +81,35 @@ multiplica la carga.
 
 ## Tareas
 
-- [ ] NAU-10-T1 `CircuitBreaker`: umbral de fallos seguidos, cooldown, apertura por 402 hasta renovación, `allow(model_id)`. Aceptación: N fallos abren; el cooldown cierra; un 402 no cierra solo. Riesgo RDD: **alto**
-- [ ] NAU-10-T2 Selección del siguiente candidato respetando el orden de la política y saltando los que el breaker cerró. Aceptación: con el primero abierto, gana el segundo del ranking. Riesgo RDD: **alto**
-- [ ] NAU-10-T3 Fallback antes del primer byte: 429/5xx/402 → siguiente candidato, máximo 2 reintentos. Aceptación: tres escenarios con su cadena en `x-nan-auto-fallback`. Riesgo RDD: **alto**
-- [ ] NAU-10-T4 Corte después del primer byte: **no** se reintenta, se propaga. Aceptación: un solo intento en el log, error al cliente. Riesgo RDD: **alto**
-- [ ] NAU-10-T5 `Retry-After` en 429: no se reintenta antes de tiempo. Aceptación: el segundo intento ocurre después del plazo indicado. Riesgo RDD: **alto**
-- [ ] NAU-10-T6 Limitador de concurrencia por clave, liberado en todos los caminos. Aceptación: 6 peticiones concurrentes con límite 2 nunca superan 2 en vuelo; cancelar una libera el permiso. Riesgo RDD: **alto**
-- [ ] NAU-10-T7 Cabecera `x-nan-auto-fallback` en streaming y sin streaming, y su ausencia cuando no hubo fallback. Aceptación: los tres casos. Riesgo RDD: medio
+- [x] NAU-10-T1 `CircuitBreaker`: umbral de fallos seguidos, cooldown, apertura por 402 hasta renovación, `allow(model_id)`. Aceptación: N fallos abren; el cooldown cierra; un 402 no cierra solo. Riesgo RDD: **alto**
+- [x] NAU-10-T2 Selección del siguiente candidato respetando el orden de la política y saltando los que el breaker cerró. Aceptación: con el primero abierto, gana el segundo del ranking. Riesgo RDD: **alto**
+- [x] NAU-10-T3 Fallback antes del primer byte: 429/5xx/402 → siguiente candidato, máximo 2 reintentos. Aceptación: tres escenarios con su cadena en `x-nan-auto-fallback`. Riesgo RDD: **alto**
+- [x] NAU-10-T4 Corte después del primer byte: **no** se reintenta, se propaga. Aceptación: un solo intento en el log, error al cliente. Riesgo RDD: **alto**
+- [x] NAU-10-T5 `Retry-After` en 429: no se reintenta antes de tiempo. Aceptación: el segundo intento ocurre después del plazo indicado. Riesgo RDD: **alto**
+- [x] NAU-10-T6 Limitador de concurrencia por clave, liberado en todos los caminos. Aceptación: 6 peticiones concurrentes con límite 2 nunca superan 2 en vuelo; cancelar una libera el permiso. Riesgo RDD: **alto**
+- [x] NAU-10-T7 Cabecera `x-nan-auto-fallback` en streaming y sin streaming, y su ausencia cuando no hubo fallback. Aceptación: los tres casos. Riesgo RDD: medio
+- [x] NAU-10-T8 Caducidad de la cuota (`quota_cooldown_s`) para que un 402 no retiere el modelo hasta reiniciar. Aceptación: tras el plazo, el modelo vuelve a estar disponible. Riesgo RDD: medio
 
 ## Evidencia de verificación
 
 | Tarea | Prueba | Resultado | Commit |
 |---|---|---|---|
-| — | pendiente | — | — |
+| T1, T6 | `uv run pytest tests/test_fallback.py` | 8 → 9 passed (incluye caducidad de cuota) | `feat(gateway)` |
+| T2-T5, T7 | `uv run pytest tests/test_proxy_fallback.py` | 12 passed | `feat(gateway)` |
+| suite | `uv run pytest` | 265 → **286 passed** | `feat(gateway)` |
+| estático | `ruff check .` + `pyright` | 0 errores, 0 warnings | `feat(gateway)` |
+| **verificación independiente** | 7 claims atacados | **7 VERIFIED**, 0 bloqueadores | — |
+
+### Hallazgos del verificador y qué se hizo
+
+| Hallazgo | Decisión |
+|---|---|
+| `x-nan-auto-fallback` salía siempre, vacía sin fallback, y la spec 8 dice "si hubo" | **corregido**: solo aparece si hubo; los tres tests que fijaban la presencia vacía se actualizaron a la regla de la spec |
+| `renew_quota` no tenía llamador: un 402 dejaba el modelo fuera hasta reiniciar el proceso | **corregido**: `quota_cooldown_s` (1 h por defecto). NaN no publica endpoint de cuota, así que el tiempo es la única señal de renovación disponible en proceso |
+| Canario sin cubrir en 402 y en agotamiento de cadena | **añadido** test que recorre ambos caminos |
+| El breaker es por modelo y se comparte entre claves; el documento decía "no debe compartirse entre claves" | **aclarado**: la spec 5.5 dice "por modelo"; el breaker es por modelo y el limitador es por clave |
+| `_slots` del limitador crece sin cota por clave única | aceptado por ahora; el número de claves en una demo es pequeño |
+| `Retry-After` en formato fecha HTTP no se parsea | aceptado: la spec habla de segundos; documentado como limitación |
 
 ## Revisión nativa (RDD)
 
@@ -103,8 +119,8 @@ multiplica la carga.
 
 ## Progreso
 
-Documento abierto.
+NAU-10 implementada, verificada de forma independiente y pendiente de merge.
 
 ## Siguiente paso
 
-T1 y T2.
+Endpoints de lectura para el dashboard (`/v1/decisions`, `/v1/playground/decide`, `/v1/stream`).

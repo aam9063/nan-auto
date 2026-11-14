@@ -118,7 +118,7 @@ async def test_alias_request_is_routed_and_annotated() -> None:
     assert response.headers["x-nan-auto-model"] == expected
     assert response.headers["x-nan-auto-decision-id"] == "decision-canned"
     assert response.headers["x-nan-auto-reason"]
-    assert response.headers["x-nan-auto-fallback"] == ""
+    assert "x-nan-auto-fallback" not in response.headers  # only when a fallback happened
 
 
 @respx.mock

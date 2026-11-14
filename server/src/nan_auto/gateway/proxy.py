@@ -91,7 +91,9 @@ def proxy_router(
     router = APIRouter()
     upstream_url = f"{settings.nan_base_url}{_CHAT_COMPLETIONS_PATH}"
     breaker = CircuitBreaker(
-        threshold=settings.breaker_threshold, cooldown_s=settings.breaker_cooldown_s
+        threshold=settings.breaker_threshold,
+        cooldown_s=settings.breaker_cooldown_s,
+        quota_cooldown_s=settings.quota_cooldown_s,
     )
     limiter = ConcurrencyLimiter(limit=settings.key_concurrency_limit)
 
@@ -221,14 +223,17 @@ def proxy_router(
                 """The `x-nan-auto-*` annotations for the delivery as it ended.
 
                 `x-nan-auto-fallback` lists every model tried before the final
-                one, in policy order, and is present but empty otherwise.
+                one, in policy order and only when there was one, as spec 8
+                words it ("si hubo").
                 """
-                return {
+                headers = {
                     "x-nan-auto-model": tried[-1],
                     "x-nan-auto-decision-id": decision_id,
                     "x-nan-auto-reason": reason,
-                    "x-nan-auto-fallback": ",".join(tried[:-1]),
                 }
+                if len(tried) > 1:
+                    headers["x-nan-auto-fallback"] = ",".join(tried[:-1])
+                return headers
 
             while attempts_used < max_attempts and final is None and handoff is None:
                 # The breaker decides who may be tried; the walk itself never

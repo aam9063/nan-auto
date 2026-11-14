@@ -108,3 +108,16 @@ def test_settings_expose_the_nau10_defaults(tmp_path, monkeypatch) -> None:
     assert settings.breaker_cooldown_s == 60.0
     assert settings.fallback_max_retries == 2  # spec 5.3: at most two retries
     assert settings.key_concurrency_limit == 8
+
+
+async def test_a_quota_exhaustion_expires_so_a_long_lived_process_recovers() -> None:
+    """NaN publishes no quota endpoint, so time is the only renewal signal.
+
+    Without an expiry a single 402 removes the model until the process
+    restarts, which for a long-lived demo host means forever.
+    """
+    breaker = CircuitBreaker(threshold=1, cooldown_s=60.0, quota_cooldown_s=0.05)
+    breaker.mark_quota_exhausted("m")
+    assert breaker.is_open("m")
+    await asyncio.sleep(0.06)
+    assert not breaker.is_open("m")

@@ -23,6 +23,7 @@ class _ModelState:
     failures: int = 0
     opened_until: float | None = None
     quota_exhausted: bool = False
+    quota_until: float | None = None
 
 
 @dataclass
@@ -36,6 +37,10 @@ class CircuitBreaker:
 
     threshold: int = 3
     cooldown_s: float = 60.0
+    # NaN publishes no quota endpoint, so a 402 has no renewal signal to wait
+    # for. Time is the only one available in-process; without it a single 402
+    # would retire the model until the process restarts.
+    quota_cooldown_s: float = 3600.0
     clock: Callable[[], float] = time.monotonic
     _state: dict[str, _ModelState] = field(default_factory=dict, repr=False)
 
@@ -56,13 +61,16 @@ class CircuitBreaker:
         state.opened_until = None
 
     def mark_quota_exhausted(self, model_id: str) -> None:
-        """A 402 keeps the model out until the quota renews, not for seconds."""
-        self._entry(model_id).quota_exhausted = True
+        """A 402 keeps the model out far longer than a normal cooldown."""
+        state = self._entry(model_id)
+        state.quota_exhausted = True
+        state.quota_until = self.clock() + self.quota_cooldown_s
 
     def renew_quota(self, model_id: str) -> None:
         """Reopen a model whose quota came back."""
         state = self._entry(model_id)
         state.quota_exhausted = False
+        state.quota_until = None
         state.failures = 0
         state.opened_until = None
 
@@ -72,7 +80,13 @@ class CircuitBreaker:
         if state is None:
             return False
         if state.quota_exhausted:
-            return True
+            if state.quota_until is not None and self.clock() >= state.quota_until:
+                # The quota window we can only guess has elapsed: try it again
+                # rather than keeping a healthy model buried forever.
+                state.quota_exhausted = False
+                state.quota_until = None
+            else:
+                return True
         if state.opened_until is None:
             return False
         if self.clock() < state.opened_until:

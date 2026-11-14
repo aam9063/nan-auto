@@ -324,7 +324,7 @@ async def test_a_client_4xx_propagates_without_fallback() -> None:
     assert response.status_code == 400
     assert response.json()["error"]["message"] == "bad request"
     assert len(upstream.calls) == 1  # no candidate can fix a client error
-    assert response.headers["x-nan-auto-fallback"] == ""
+    assert "x-nan-auto-fallback" not in response.headers  # only when a fallback happened
 
 
 async def test_retry_after_429_delays_the_next_attempt() -> None:
@@ -505,3 +505,33 @@ async def test_client_cancellation_releases_the_limiter_slot() -> None:
     async with asyncio.timeout(2.0):
         response = await post_json(app, chat_body())
     assert response.status_code == 200
+
+
+async def test_the_client_key_survives_quota_and_exhaustion_paths() -> None:
+    """402 refusals and an all-open breaker are new paths; the key stays out.
+
+    The canary must reach the outbound Authorization header byte for byte and
+    nothing else, including when every candidate is refused for quota and when
+    the whole chain is open before any call is made.
+    """
+    canary = "sk-CANARY-402-EXHAUST"
+    chain = await policy_chain()
+    assert len(chain) == 10
+    upstream = RoutedUpstream(
+        default=lambda: httpx.Response(402, json={"error": {"message": canary}})
+    )
+    app = make_app(upstream, Settings(default_model=DEFAULT_MODEL))
+
+    quota = await post_json(app, chat_body(), headers={"Authorization": canary})
+    assert canary not in json.dumps(dict(quota.headers))
+    assert {call.headers["authorization"] for call in upstream.calls} == {canary}
+
+    for _ in range(3):
+        await post_json(app, chat_body(), headers={"Authorization": canary})
+    calls_before = len(upstream.calls)
+    exhausted = await post_json(app, chat_body(), headers={"Authorization": canary})
+    assert exhausted.status_code == 502
+    assert exhausted.json()["error"]["code"] == "no_model"
+    assert canary not in json.dumps(dict(exhausted.headers))
+    assert len(upstream.calls) == calls_before  # the chain never reached the wire
+    assert calls_before == 10  # every candidate refused once, and only once

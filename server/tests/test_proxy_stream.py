@@ -218,7 +218,7 @@ async def test_streaming_response_sets_decision_headers() -> None:
     assert call.headers["x-nan-auto-model"]
     assert call.headers["x-nan-auto-decision-id"] == "decision-canned"
     assert call.headers["x-nan-auto-reason"]
-    assert call.headers["x-nan-auto-fallback"] == ""
+    assert "x-nan-auto-fallback" not in call.headers  # only when a fallback happened
 
 
 async def test_upstream_error_before_first_byte_propagates_with_status() -> None:
