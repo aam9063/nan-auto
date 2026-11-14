@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Blocks direct pushes to main and dev from this clone (spec 15.7, layer 2).
+# Escalation hatch for the integrator: ALLOW_PROTECTED_PUSH=1 git push origin dev
+protected='^refs/heads/(main|dev)$'
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" =~ $protected ]] && [[ "${ALLOW_PROTECTED_PUSH:-0}" != "1" ]]; then
+    echo "Direct push to ${remote_ref#refs/heads/} blocked. Open a PR." >&2
+    exit 1
+  fi
+done
+exit 0
