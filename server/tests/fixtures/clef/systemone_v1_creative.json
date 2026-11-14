@@ -1,0 +1,87 @@
+{
+  "id": "decision-ae438c1c767222e6",
+  "object": "structured_decision",
+  "created": 1794648375,
+  "model": "clef",
+  "answers": {
+    "task": {
+      "type": "choice",
+      "choice": "creative_writing",
+      "probabilities": {
+        "chat_casual": 0.010589328594505787,
+        "coding_debug_or_review": 0.010589328594505787,
+        "creative_writing": 0.9682320952415466,
+        "other": 0.010589328594505787
+      },
+      "confidence": 0.9682320952415466
+    },
+    "difficulty": {
+      "type": "score",
+      "score": 1.6786928549408913,
+      "legend": {
+        "0": "Trivial",
+        "1": "Easy",
+        "2": "Medium",
+        "3": "Hard",
+        "4": "Expert"
+      },
+      "probabilities": {
+        "0": 0.08473338186740875,
+        "1": 0.24614380300045013,
+        "2": 0.6021142601966858,
+        "3": 0.03971374034881592,
+        "4": 0.02729482762515545
+      },
+      "confidence": 0.6021142601966858
+    },
+    "needs_reasoning": {
+      "type": "noul",
+      "noul": 0.23792991042137146,
+      "probabilities": {
+        "yes": 0.23792991042137146,
+        "no": 0.7620701193809509
+      },
+      "confidence": 0.7620701193809509
+    },
+    "expected_output_length": {
+      "type": "score",
+      "score": 1.2324515413492918,
+      "legend": {
+        "0": "Very short",
+        "1": "Short",
+        "2": "Medium",
+        "3": "Long"
+      },
+      "probabilities": {
+        "0": 0.1321033537387848,
+        "1": 0.5317442417144775,
+        "2": 0.30774998664855957,
+        "3": 0.02840244211256504
+      },
+      "confidence": 0.5317442417144775
+    }
+  },
+  "usage": {
+    "input_tokens": 514,
+    "output_tokens": 0
+  },
+  "diagnostics": {
+    "task": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "difficulty": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "needs_reasoning": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "expected_output_length": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    }
+  },
+  "joint": null
+}

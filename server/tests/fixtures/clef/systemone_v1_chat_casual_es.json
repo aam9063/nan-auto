@@ -1,0 +1,87 @@
+{
+  "id": "decision-a96824ca0fffa88f",
+  "object": "structured_decision",
+  "created": 1794648374,
+  "model": "clef",
+  "answers": {
+    "task": {
+      "type": "choice",
+      "choice": "chat_casual",
+      "probabilities": {
+        "chat_casual": 0.9741422533988953,
+        "coding_debug_or_review": 0.00404379004612565,
+        "creative_writing": 0.010992160998284817,
+        "other": 0.010821743868291378
+      },
+      "confidence": 0.9741422533988953
+    },
+    "difficulty": {
+      "type": "score",
+      "score": 0.5233494240092114,
+      "legend": {
+        "0": "Trivial",
+        "1": "Easy",
+        "2": "Medium",
+        "3": "Hard",
+        "4": "Expert"
+      },
+      "probabilities": {
+        "0": 0.5113508105278015,
+        "1": 0.4583719074726105,
+        "2": 0.027313152328133583,
+        "3": 0.0015052076196298003,
+        "4": 0.0014588972553610802
+      },
+      "confidence": 0.5113508105278015
+    },
+    "needs_reasoning": {
+      "type": "noul",
+      "noul": 0.04535257816314697,
+      "probabilities": {
+        "yes": 0.04535257816314697,
+        "no": 0.954647421836853
+      },
+      "confidence": 0.954647421836853
+    },
+    "expected_output_length": {
+      "type": "score",
+      "score": 1.3454796522855759,
+      "legend": {
+        "0": "Very short",
+        "1": "Short",
+        "2": "Medium",
+        "3": "Long"
+      },
+      "probabilities": {
+        "0": 0.1318046599626541,
+        "1": 0.43048596382141113,
+        "2": 0.3981344401836395,
+        "3": 0.03957493603229523
+      },
+      "confidence": 0.43048596382141113
+    }
+  },
+  "usage": {
+    "input_tokens": 509,
+    "output_tokens": 0
+  },
+  "diagnostics": {
+    "task": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "difficulty": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "needs_reasoning": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "expected_output_length": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    }
+  },
+  "joint": null
+}
