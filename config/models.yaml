@@ -1,0 +1,148 @@
+# Capability metadata for NaN chat models.
+#
+# The model LIST is discovered at runtime from GET /v1/models (spec 4); this
+# file only adds what the API does not report: input modalities, how reasoning
+# is toggled, premium quota and policy tiers. Unknown ids fall back to
+# "generalist" defaults.
+#
+# Catalog verified against the live API on 2026-11-14. It differs from the
+# design notes: qwen3.8-max, kimi-k3.1-pro, hy4, deepseek-v4-pro and
+# mimo-v2.6-flash are new, and mimo-v2.5 no longer exists.
+
+models:
+  # --- tiers: fast ---
+  gemma4:
+    context: 256K
+    input: [text, image]
+    tools: xml
+    reasoning:
+      # MEASURED 2026-11-14: with no parameters gemma4 emits reasoning tokens
+      # (72 of 80 at max_tokens=80, 1763 ms). The design notes claim it is off
+      # by default and that is wrong: an explicit false is what turns it off
+      # (877 ms, 0 reasoning tokens).
+      mode: togglable_default_off
+      off: { chat_template_kwargs: { enable_thinking: false } }
+      on: { chat_template_kwargs: { enable_thinking: true } }
+
+  qwen3.8-flash:
+    context: 1M            # API: max_input_tokens 1000000
+    input: [text, image]
+    tools: xml
+    reasoning:
+      # MEASURED 2026-11-14: the design notes call it always-on, but an
+      # explicit false stops it (34 -> 0 reasoning tokens, 980 -> 908 ms).
+      mode: togglable
+      off: { chat_template_kwargs: { enable_thinking: false } }
+      on: { chat_template_kwargs: { enable_thinking: true } }
+
+  glm5.3-flash:
+    context: 1M            # API: max_input_tokens 1048576
+    input: [text, image]
+    tools: true
+    reasoning:
+      # MEASURED 2026-11-14: always-on confirmed, an explicit false does not
+      # lower its reasoning tokens (66 -> 58, within noise).
+      mode: always_on
+
+  # --- tiers: generalist ---
+  qwen3.6:
+    context: 256K
+    input: [text, image]
+    tools: true
+    reasoning:
+      mode: togglable
+      off: { chat_template_kwargs: { enable_thinking: false } }
+      on: { chat_template_kwargs: { enable_thinking: true } }
+
+  deepseek-v4-flash:
+    context: 1M
+    input: [text]          # image support unverified [VERIFICAR]
+    tools: true
+    reasoning:
+      # MEASURED 2026-11-14: effort does not reduce reasoning on a trivial
+      # prompt (38 tokens with no parameters, 41 with effort=low), and there
+      # is no documented way to switch it off. Treat `off` as unavailable.
+      mode: effort
+      levels: [low, medium, high]
+      cannot_disable: true
+    notes: json_schema unsupported, use json_object with the schema in the prompt [VERIFICAR]
+
+  # --- tiers: max capability ---
+  glm5.3:
+    context: 1M            # API: max_input_tokens 1048576
+    input: [text]
+    tools: true
+    reasoning:
+      mode: always_on      # no documented switch
+    premium: true
+
+  mimo-v2.6-flash:
+    context: 1M            # API: max_input_tokens 1000000
+    input: [text, image, audio]
+    tools: true
+    reasoning:
+      mode: always_on
+    notes: replaces mimo-v2.5 from the design notes; only audio-capable chat model
+
+  # --- discovered on the live catalog, not classified yet ---
+  qwen3.8-max:
+    context: 1M            # API: max_input_tokens 1000000, max_output 131072
+    input: [text]
+    tools: true
+    reasoning:
+      mode: unknown
+    tier: unclassified
+
+  kimi-k3.1-pro:
+    context: 1M            # API: max_input_tokens 1048576
+    input: [text]
+    tools: true
+    reasoning:
+      mode: unknown
+    tier: unclassified
+
+  deepseek-v4-pro:
+    context: 1M            # API: max_input_tokens 1048576, max_output 393216
+    input: [text]
+    tools: true
+    reasoning:
+      mode: effort
+      levels: [low, medium, high]
+    tier: unclassified
+
+  hy4:
+    context: 1M            # API: max_input_tokens 1000000
+    input: [text]
+    tools: true
+    reasoning:
+      mode: unknown
+    tier: unclassified
+
+  minimax-h3:
+    premium: true
+    excluded_from_policy: true   # no data yet (spec 4)
+    tier: unclassified
+
+# The API reports mode "chat" for these two, but they are image generators.
+# The registry must exclude them with this card, not trust `mode`.
+non_chat:
+  flux-2-klein:
+    kind: image_generation
+    advertised_mode: chat
+  qwen-image-2.1:
+    kind: image_generation
+    advertised_mode: chat
+  qwen3-embedding:
+    kind: embedding
+  rerank:
+    kind: rerank
+  kokoro:
+    kind: audio_speech
+  whisper:
+    kind: audio_transcription
+
+# Initial tiers [HIPOTESIS]: replaced by the measured quality matrix (spec 11).
+tiers:
+  t1_fast: [gemma4, qwen3.8-flash, glm5.3-flash]
+  t2_generalist: [qwen3.6, deepseek-v4-flash]
+  t3_max: [glm5.3, mimo-v2.6-flash]

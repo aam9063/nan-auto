@@ -1,0 +1,87 @@
+{
+  "id": "decision-9b11c258b0f369b0",
+  "object": "structured_decision",
+  "created": 1794648374,
+  "model": "clef",
+  "answers": {
+    "task": {
+      "type": "choice",
+      "choice": "coding_debug_or_review",
+      "probabilities": {
+        "chat_casual": 0.007971596904098988,
+        "coding_debug_or_review": 0.9656098484992981,
+        "creative_writing": 0.0057417256757617,
+        "other": 0.0206767488270998
+      },
+      "confidence": 0.9656098484992981
+    },
+    "difficulty": {
+      "type": "score",
+      "score": 2.9063234739005566,
+      "legend": {
+        "0": "Trivial",
+        "1": "Easy",
+        "2": "Medium",
+        "3": "Hard",
+        "4": "Expert"
+      },
+      "probabilities": {
+        "0": 0.008093730546534061,
+        "1": 0.01686878129839897,
+        "2": 0.3692235052585602,
+        "3": 0.27224835753440857,
+        "4": 0.3335656523704529
+      },
+      "confidence": 0.3692235052585602
+    },
+    "needs_reasoning": {
+      "type": "noul",
+      "noul": 0.8335957527160645,
+      "probabilities": {
+        "yes": 0.8335957527160645,
+        "no": 0.16640429198741913
+      },
+      "confidence": 0.8335957527160645
+    },
+    "expected_output_length": {
+      "type": "score",
+      "score": 1.985994890332222,
+      "legend": {
+        "0": "Very short",
+        "1": "Short",
+        "2": "Medium",
+        "3": "Long"
+      },
+      "probabilities": {
+        "0": 0.041598204523324966,
+        "1": 0.12926259636878967,
+        "2": 0.6306852698326111,
+        "3": 0.19845391809940338
+      },
+      "confidence": 0.6306852698326111
+    }
+  },
+  "usage": {
+    "input_tokens": 518,
+    "output_tokens": 0
+  },
+  "diagnostics": {
+    "task": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "difficulty": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "needs_reasoning": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    },
+    "expected_output_length": {
+      "label_mass": 1.0,
+      "argmax_is_label": true
+    }
+  },
+  "joint": null
+}
