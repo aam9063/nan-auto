@@ -41,6 +41,10 @@ _TIER_FIT = {1: 1.0, 2: 0.75, 3: 0.5}
 _ID_FIT = {1: 1.0, 2: 0.85, 3: 0.7}
 # Observed quota or failure pressure; the registry reports it via health.
 _QUOTA_PENALTY = 0.25
+# Asking a model to stop reasoning when its card says always_on buys nothing:
+# the request pays the reasoning latency anyway. Two models in the same tier
+# with the same fit differ only in whether the switch exists [HIPÓTESIS].
+_LOCKED_REASONING_PENALTY = 0.3
 # Beyond this the summarize row prefers the 1M-context models [HIPÓTESIS].
 LONG_CONTEXT_TOKENS = 100_000
 
@@ -113,7 +117,7 @@ def decide(
         now=now,
         card=card,
     )
-    ranked = _rank(row, filtered.candidates, inventory, resolved, health)
+    ranked = _rank(row, filtered.candidates, inventory, resolved, health, want_off=level == "off")
     if ranked:
         return PolicyResult(
             model=ranked[0],
@@ -218,11 +222,17 @@ def _rank(
     inventory: Mapping[str, ModelInfo],
     profile: Profile,
     health: Mapping[str, ModelHealth] | None,
+    *,
+    want_off: bool = False,
 ) -> tuple[str, ...]:
     """Score every candidate; ties resolve by inventory order, so the
     returned order is stable and reproducible across identical calls."""
     scores = [
-        (index, model_id, _score(row, inventory[model_id], profile, health))
+        (
+            index,
+            model_id,
+            _score(row, inventory[model_id], profile, health, want_off=want_off),
+        )
         for index, model_id in enumerate(candidates)
     ]
     scores.sort(key=lambda item: (-item[2], item[0]))
@@ -234,13 +244,16 @@ def _score(
     info: ModelInfo,
     profile: Profile,
     health: Mapping[str, ModelHealth] | None,
+    *,
+    want_off: bool = False,
 ) -> float:
     """`score = fit*q - latency*l - quota_penalty` (spec 7.3)."""
     fit = _fit(row, info)
     latency = _LATENCY_BY_TIER.get(info.tier, _DEFAULT_LATENCY)
     state = health.get(info.id) if health is not None else None
     quota = _QUOTA_PENALTY if state is not None and state.failures > 0 else 0.0
-    return fit * profile.q_weight - latency * profile.l_weight - quota
+    locked = _LOCKED_REASONING_PENALTY if want_off and info.reasoning_mode == "always_on" else 0.0
+    return fit * profile.q_weight - latency * profile.l_weight - quota - locked
 
 
 def _fit(row: _Row, info: ModelInfo) -> float:
