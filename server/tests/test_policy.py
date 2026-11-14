@@ -436,3 +436,49 @@ def test_an_explicit_on_request_still_allows_the_effort_model() -> None:
     )
     assert result.reasoning in {"low", "medium", "high"}
     assert result.model == "deepseek-v4-flash"
+
+
+def test_a_doubtful_reading_says_so_in_the_reason() -> None:
+    """Spec 6.4 raises the tier on doubt; the reason must admit it happened.
+
+    Without this the dashboard shows a tier-3 model answering a simple question
+    and gives the reader no way to understand why.
+    """
+    split = Decision(
+        decision_id="d",
+        model="clef",
+        task=ChoiceAnswer(label="factual_qa", probabilities={"factual_qa": 0.8}, confidence=0.8),
+        difficulty=ScoreAnswer(
+            score=2.5,
+            legend={"0": "Trivial", "1": "Easy", "2": "Medium", "3": "Hard", "4": "Expert"},
+            probabilities={"1": 0.3, "2": 0.05, "3": 0.35, "4": 0.3},  # mass on both ends
+            confidence=0.35,
+        ),
+        needs_reasoning=NoulAnswer(yes=0.5, confidence=0.5),
+        expected_output_length=ScoreAnswer(
+            score=1.0, legend={"0": "a", "1": "b"}, probabilities={"1": 0.9}, confidence=0.9
+        ),
+    )
+    confident = Decision(
+        decision_id="d",
+        model="clef",
+        task=ChoiceAnswer(label="factual_qa", probabilities={"factual_qa": 0.95}, confidence=0.95),
+        difficulty=ScoreAnswer(
+            score=2.0,
+            legend={"0": "Trivial", "1": "Easy", "2": "Medium", "3": "Hard", "4": "Expert"},
+            probabilities={"2": 0.9},
+            confidence=0.9,
+        ),
+        needs_reasoning=NoulAnswer(yes=0.1, confidence=0.9),
+        expected_output_length=ScoreAnswer(
+            score=1.0, legend={"0": "a", "1": "b"}, probabilities={"1": 0.9}, confidence=0.9
+        ),
+    )
+    inventory = _inventory()
+    features = RequestFeatures(has_image=False, has_audio=False, est_tokens=10, turns=1)
+
+    doubtful = decide(split, features, inventory, profile="nan-auto")
+    assert doubtful.reason.endswith(" bumped")
+
+    sure = decide(confident, features, inventory, profile="nan-auto")
+    assert "bumped" not in sure.reason

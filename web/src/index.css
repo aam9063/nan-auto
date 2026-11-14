@@ -1,1 +1,7 @@
 @import "tailwindcss";
+
+/* NaN Auto dashboard — sober dark theme (spec 10): a demo screen that has to
+   be read from a projector, so contrast beats decoration. */
+:root {
+  color-scheme: dark;
+}

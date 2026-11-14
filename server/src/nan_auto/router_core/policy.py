@@ -104,11 +104,16 @@ def decide(
     row = _table_row(task, difficulty, features)
     # Spec 6.4: low task confidence or a split difficulty read has no second
     # query to fall back on — exactly one tier up, more capability, never less.
-    if decision.task.confidence < 0.60 or decision.difficulty.is_split():
+    bumped = decision.task.confidence < 0.60 or decision.difficulty.is_split()
+    if bumped:
         row = _bump(row)
     reasoning_on = _reasoning_on(row, resolved, difficulty, decision)
     level = _level(reasoning_on, task, difficulty)
     reason = f"{task} d={difficulty} reasoning={_ON if reasoning_on else _OFF}"
+    if bumped:
+        # Spec 6.4's rule is invisible otherwise: a reader sees a tier-3 model
+        # answering a factual question and cannot tell why.
+        reason = f"{reason} bumped"
 
     filtered = filter_candidates(
         features,
