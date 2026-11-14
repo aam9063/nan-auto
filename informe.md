@@ -3,7 +3,7 @@
 > Documento vivo. Registra qué se construye, cómo, **qué se rompió en el camino y cómo se
 > detectó y resolvió**. Se actualiza al final de cada unidad de trabajo.
 >
-> Última actualización: 2026-11-14 · rama `dev` en `a64fc2f` · 231 tests en verde.
+> Última actualización: 2026-11-14 · rama `dev` en `ddd3eb7` · 246 tests en verde.
 
 ---
 
@@ -62,12 +62,12 @@ el gateway apaga el razonamiento de verdad en tareas triviales. No siempre fue a
 | — | Calibración medida del razonamiento | hecho | `bc95661` |
 | — | Preferencia por modelos que respetan `off` | hecho | `2e18f03` |
 | NAU-10 | Fallback y circuit breaker | pendiente | — |
-| NAU-13 | Log de decisiones sin contenido | pendiente (primer intento falló) | — |
+| NAU-13 | Log de decisiones sin contenido | hecho | `ddd3eb7` |
 | NAU-14/15 | Benchmark y evaluación offline | pendiente | — |
 | NAU-16/17 | Dashboard | pendiente | — |
 | NAU-12/11 | Estabilidad conversacional y presupuesto de decisión | pendiente | — |
 
-**Números reales**, no estimados: 231 tests, `ruff` limpio, `pyright` 0 errores.
+**Números reales**, no estimados: 246 tests, `ruff` limpio, `pyright` 0 errores.
 
 ---
 
@@ -132,7 +132,25 @@ Aquí está la mayor sorpresa del proyecto y el error más caro (sección 5.2). 
 del diseño estaba equivocada en tres de cinco modelos, y el razonamiento **se estaba comiendo
 las respuestas**.
 
-### 4.5 Proxy y streaming (NAU-07/08)
+### 4.5 Registro de decisiones (NAU-13)
+
+SQLite sobre las tablas del diseño. La decisión de diseño que lo hace defendible:
+**la API pública no tiene parámetro para el prompt, la respuesta ni la clave**. No es que no
+se guarden: es que no hay forma de pasarlos. `record_decision` recibe dataclasses congeladas de
+identificadores, enumerados y números.
+
+La conversación entra **solo como hash**, porque la cabecera `x-conversation-id` la elige el
+cliente y podría contener texto suyo.
+
+Verificado con una sonda propia: se escribió una decisión con un prompt y una clave canario en los
+alrededores, y se recorrieron **todas las columnas de las tres tablas**:
+
+```
+tablas: ['REQUEST_LOG', 'DECISION_ANSWER', 'ATTEMPT']
+columnas con el prompt o la clave: NINGUNA
+```
+
+### 4.6 Proxy y streaming (NAU-07/08)
 
 `POST /v1/chat/completions` compone todo y reenvía. Verificado con HTTP real:
 
@@ -333,7 +351,27 @@ con la tabla de mutaciones.
 **Lección:** la evidencia honesta vale más que la evidencia bonita. Y un test que nunca falló no
 se sabe si sirve; la mutación lo demuestra.
 
-### 5.10 Errores menores, todos reales
+### 5.10 Un worker implementó en la rama equivocada
+
+**Síntoma:** el worker entregó 15 tests y 246 en verde, y en su propio informe avisó de que el
+árbol de trabajo estaba en `dev`, no en `feature/nau-13-log`.
+
+**Causa:** se le pidió trabajar en la rama, pero no se le dio un `checkout`; su árbol era el que
+había. Los dos ficheros eran nuevos y no rastreados, así que viajaron con el cambio de rama sin
+conflicto.
+
+**Detección:** el propio agente lo declaró como riesgo en lugar de callarlo. Sin esa nota, los
+ficheros habrían entrado en `dev` y la rama de la feature habría quedado vacía — el mismo error
+de topología ya documentado en 5.6, esta vez por una vía distinta.
+
+**Resolución:** los ficheros se movieron a la rama correcta con el cambio de rama (son
+*untracked*), se ejecutó la suite allí (222 = 207 sin proxy + 15 nuevos) y recién entonces se
+fusionó.
+
+**Lección:** "trabaja en la rama X" no es una instrucción verificable para quien no puede ejecutar
+`git`. Lo verificable es **revisar la rama antes de commitear**, que es lo que pasó.
+
+### 5.11 Errores menores, todos reales
 
 | Error | Detección | Resolución |
 |---|---|---|
@@ -345,6 +383,7 @@ se sabe si sirve; la mutación lo demuestra.
 | El test de valores por defecto se rompió al aparecer un `.env` real | suite en rojo | `monkeypatch.chdir(tmp_path)` para aislarlo |
 | `uv build` exigía el módulo con el nombre del proyecto | `uv sync` falló | `[tool.uv.build-backend] module-name` |
 | Un worker devolvió informe vacío (NAU-13) | notificación de fallo | se descarta su trabajo (árbol limpio) y se reintenta |
+| El log de decisiones omitía `clef_timeout` | contraste con el diseño al leer la tabla | se incluye: el diseño (spec 9) lo tiene y la lista de tareas no |
 
 ---
 
@@ -367,7 +406,7 @@ Todo lo que sigue está **observado**, no narrado:
 
 | Qué | Resultado |
 |---|---|
-| Suite del servidor | **231 passed** |
+| Suite del servidor | **246 passed** |
 | Lint y tipos | `ruff` limpio · `pyright` 0 errores, 0 warnings |
 | Contrato de Clef | 3 fixtures reales, parser con 9 tests |
 | Catálogo real | 18 → 12 servibles; 6 excluidos con motivo |
@@ -375,6 +414,7 @@ Todo lo que sigue está **observado**, no narrado:
 | Clave del cliente | canario en 7 escenarios; verificador independiente con su propio canario y barrido de `gc.get_objects()` |
 | Privacidad del extractor | canario en system, usuario, imagen y audio: **no aparece en la salida** |
 | Razonamiento | 0 tokens en tarea trivial (antes: 72, con `content: null`) |
+| Log sin contenido | canario en prompt y clave; 3 tablas, 0 columnas con él |
 | Verificación independiente | NAU-02: 3 claims VERIFIED + 1 REFUTED → corregido. NAU-07/08: 5 VERIFIED, 0 bloqueadores |
 
 ---
@@ -395,7 +435,7 @@ Todo lo que sigue está **observado**, no narrado:
 - NAU-11: presupuesto de decisión de 800 ms con falla abierta. Con Clef medido en 450–570 ms, el
   margen es estrecho: conviene decidir si sube el presupuesto o si se acepta más fallback.
 - NAU-12: estabilidad por conversación.
-- NAU-13: log de decisiones sin contenido (primer intento del worker falló sin informe).
+- Cablear el log en el proxy y el SSE del feed en vivo (la capa de datos ya existe).
 - NAU-14/15: matriz de calidad y evaluación offline — es lo que convierte las `[HIPÓTESIS]` de la
   política en datos.
 - NAU-16/17: dashboard.
