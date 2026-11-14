@@ -317,6 +317,54 @@ async def test_a_model_that_rejects_temperature_is_retried_without_it() -> None:
 
 
 @respx.mock
+async def test_a_first_attempt_429_raises_rate_limited_before_any_temperature_retry() -> None:
+    """A 429 with temperature in the body must surface as RateLimited: the
+    backoff policy owns retries. A temperature retry may never swallow it nor
+    fire an immediate second request while the key is being throttled."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if "temperature" in body:
+            return httpx.Response(429)
+        return httpx.Response(200, json=_openai_payload())
+
+    respx.post("http://test/chat/completions").mock(side_effect=handler)
+    async with httpx.AsyncClient(base_url="http://test") as client:
+        call = bench_matrix.make_chat_call(client, api_key="k")
+        try:
+            await call("hi", "kimi-k3.1-pro")
+        except RateLimited:
+            pass
+        else:
+            raise AssertionError("a 429 must surface as RateLimited for the harness to back off")
+
+
+@respx.mock
+async def test_a_sustained_429_storm_terminates_every_pair_without_leaking_a_slot() -> None:
+    """Under a full 429 storm at concurrency=1, every pair ends as an error
+    row and the run terminates: no leaked slot, no hang, no answer counted."""
+
+    class AlwaysRateLimited:
+        async def __call__(self, prompt: str, model: str) -> CallResult:
+            raise bench_matrix.RateLimited("chat/completions answered 429")
+
+    db = open_db(Path(":memory:"))
+    sleeps: list[float] = []
+    await bench_matrix.run_matrix(
+        db,
+        make_prompts(1),
+        ["m1", "m2"],
+        call=AlwaysRateLimited(),
+        concurrency=1,
+        max_retries=1,
+        backoff_s=0.0,
+        sleep=sleep_recorder(sleeps),
+    )
+    assert db.execute("select count(*) from results where error is not null").fetchone()[0] == 2
+    assert db.execute("select count(*) from results where answer is not null").fetchone()[0] == 0
+
+
+@respx.mock
 async def test_chat_call_surfaces_429_as_rate_limited() -> None:
     respx.post("http://test/chat/completions").mock(return_value=httpx.Response(429))
     async with httpx.AsyncClient(base_url="http://test") as client:

@@ -167,7 +167,7 @@ def make_chat_call(
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=timeout,
             )
-            if response.status_code >= 400 and "temperature" in body:
+            if response.status_code == 400 and "temperature" in body:
                 # Measured 2026-11-14: kimi-k3.1-pro rejects ANY explicit
                 # temperature (even 0.01) with a parameterless 400. Retry once
                 # without it: the row then samples at provider default, an
