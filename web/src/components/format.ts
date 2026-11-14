@@ -19,3 +19,19 @@ export function fmtTime(iso: string | null | undefined): string {
 export function fmtPct(value: number): string {
   return `${Math.round(value * 1000) / 10}%`
 }
+
+/** Spanish decimal comma, as the mockups print seconds and scores. */
+export function fmtSeconds(valueMs: number | null | undefined): string {
+  if (valueMs == null) return "—"
+  return `${(valueMs / 1000).toFixed(2).replace(".", ",")} s`
+}
+
+export function fmtDecimal(value: number | null | undefined, digits = 2): string {
+  if (value == null) return "—"
+  return value.toFixed(digits).replace(".", ",")
+}
+
+export function fmtPctEs(value: number | null | undefined): string {
+  if (value == null) return "—"
+  return `${fmtDecimal(value * 100, 1)}%`
+}

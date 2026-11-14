@@ -1,122 +1,140 @@
 import { useRegistry } from "../hooks/useRegistry"
-import { DecisionRefusal, StatusBadge } from "./parts"
-import type { ReactNode } from "react"
+import { Card, DecisionRefusal, EmptyNote, StateChip, Td, Th, TierChip, UiButton } from "./parts"
+import type { RegistryModel } from "../types"
 
-const TOKEN_OR_DASH = (value: number | null) => (value == null ? "—" : value.toLocaleString())
+/** "sin dato" in place of every value the registry does not carry. */
+const TOKEN_OR_SIN_DATO = (value: number | null) =>
+  value == null ? "sin dato" : value.toLocaleString("es-ES")
+
+const TOOLS_OR_SIN_DATO = (tools: boolean | string) => {
+  if (typeof tools === "string") return tools
+  return tools ? "sí" : "no"
+}
+
+const EXPLAINERS: { title: string; text: string }[] = [
+  {
+    title: "Circuito",
+    text: "Cada modelo lleva su cortacircuitos: tras varios fallos seguidos el gateway deja de intentarlo un tiempo y pasa al siguiente candidato, en lugar de insistir contra un modelo caído.",
+  },
+  {
+    title: "Sin cuota (402)",
+    text: "Un 402 significa que el proveedor agotó la cuota del modelo. La fila lo marca como degradado y el router lo excluye hasta que caduca la marca «abierto hasta».",
+  },
+  {
+    title: "Herramientas en XML",
+    text: "Algunos modelos solo aceptan las herramientas descritas en XML. Cuando el cliente exige el formato nativo, el router los descarta antes de decidir (motivo «xml_tools»).",
+  },
+]
 
 export function RegistryScreen() {
   const { status, models, error, refetch } = useRegistry()
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs text-neutral-500">
-          Reading <code>/v1/registry</code> — inventory plus live state, as the gateway sees it.
-        </span>
-        {status === "ready" && (
-          <span className="ml-auto text-xs text-neutral-500">
-            {models.length} model{models.length === 1 ? "" : "s"}
-          </span>
-        )}
-      </div>
+    <section className="space-y-6">
+      <Card
+        title="Modelos de NaN"
+        actions={
+          <UiButton onClick={refetch} className="px-3 py-1.5 text-xs">
+            Refrescar registro
+          </UiButton>
+        }
+      >
+        <EmptyNote>
+          Leyendo <code className="font-mono">/v1/registry</code> — el inventario y su estado en
+          vivo, tal como lo ve el gateway.
+          {status === "ready" &&
+            ` ${models.length} modelo${models.length === 1 ? "" : "s"} en el registro.`}
+        </EmptyNote>
 
-      {status === "error" && (
-        <div className="space-y-2">
-          <DecisionRefusal title="Registry unavailable" message={error ?? "unknown error"} />
-          <button
-            type="button"
-            onClick={refetch}
-            className="rounded-md border border-neutral-600 px-3 py-1 text-sm text-neutral-100 hover:border-neutral-400"
-          >
-            Retry
-          </button>
+        <div className="mt-4">
+          {status === "error" && (
+            <DecisionRefusal title="Registro no disponible" message={error ?? "error desconocido"} />
+          )}
+
+          {status === "loading" && <EmptyNote>Cargando el registro…</EmptyNote>}
+
+          {status === "ready" && models.length === 0 && (
+            <div className="rounded-lg border border-dashed border-line p-6">
+              <EmptyNote>
+                El registro no informa de ningún modelo. No se inventa nada para rellenar la tabla.
+              </EmptyNote>
+            </div>
+          )}
+
+          {status === "ready" && models.length > 0 && (
+            <div className="-mx-2 overflow-x-auto">
+              <table className="w-full min-w-[960px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-line text-xs text-muted">
+                    <Th>Modelo</Th>
+                    <Th>Escalón</Th>
+                    <Th>Contexto</Th>
+                    <Th>Entrada</Th>
+                    <Th>Herramientas</Th>
+                    <Th>Razonamiento</Th>
+                    <Th>Estado</Th>
+                    <Th>Circuito</Th>
+                    <Th>Latencia</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {models.map((model) => (
+                    <RegistryRow key={model.id} model={model} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
+      </Card>
 
-      {status === "loading" && (
-        <p className="rounded-lg border border-dashed border-neutral-800 p-6 text-sm text-neutral-400">
-          Loading the registry…
-        </p>
-      )}
-
-      {status === "ready" && models.length === 0 && (
-        <p className="rounded-lg border border-dashed border-neutral-800 p-6 text-sm text-neutral-400">
-          The registry reports no models. Nothing has been invented to fill the table.
-        </p>
-      )}
-
-      {status === "ready" && models.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-neutral-800">
-          <table className="w-full min-w-200 text-left text-xs">
-            <thead>
-              <tr className="border-b border-neutral-800 bg-neutral-900/60 text-neutral-500">
-                <Th>model</Th>
-                <Th>tier</Th>
-                <Th>state</Th>
-                <Th>failures</Th>
-                <Th>quota</Th>
-                <Th>mode</Th>
-                <Th>input</Th>
-                <Th>tools</Th>
-                <Th>reasoning</Th>
-                <Th>premium</Th>
-                <Th>max in/out</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.map((model) => (
-                <tr key={model.id} className="border-b border-neutral-800/60 text-neutral-300">
-                  <Td>
-                    <span className="font-medium text-neutral-100">{model.id}</span>
-                    <span className="ml-2 text-neutral-500">{model.owned_by}</span>
-                  </Td>
-                  <Td mono>{model.tier === "" ? "—" : model.tier}</Td>
-                  <Td>
-                    <StatusBadge
-                      tone={model.state.available ? "good" : "bad"}
-                      label={model.state.available ? "available" : "unavailable"}
-                    />
-                  </Td>
-                  <Td mono>{model.state.failures}</Td>
-                  <Td>
-                    {model.state.quota_exhausted_until == null ? (
-                      <span className="text-neutral-600">ok</span>
-                    ) : (
-                      <span className="text-amber-300">
-                        until {model.state.quota_exhausted_until}
-                      </span>
-                    )}
-                  </Td>
-                  <Td mono>{model.mode}</Td>
-                  <Td mono>{model.input.join(", ")}</Td>
-                  <Td mono>{String(model.tools)}</Td>
-                  <Td mono>{model.reasoning_mode}</Td>
-                  <Td mono>{model.premium ? "yes" : "no"}</Td>
-                  <Td mono>
-                    {TOKEN_OR_DASH(model.max_input_tokens)} / {TOKEN_OR_DASH(model.max_output_tokens)}
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <Card title="Cómo se lee">
+        <dl className="grid gap-6 sm:grid-cols-3">
+          {EXPLAINERS.map((explainer) => (
+            <div key={explainer.title}>
+              <dt className="text-sm font-semibold text-ink">{explainer.title}</dt>
+              <dd className="mt-1 text-xs leading-relaxed text-muted">{explainer.text}</dd>
+            </div>
+          ))}
+        </dl>
+      </Card>
     </section>
   )
 }
 
-function Th({ children }: { children: string }) {
-  return <th className="px-3 py-2 font-medium uppercase tracking-wide">{children}</th>
-}
-
-function Td({
-  children,
-  mono = false,
-}: {
-  children: ReactNode
-  mono?: boolean
-}) {
+function RegistryRow({ model }: { model: RegistryModel }) {
+  const degraded = model.state.quota_exhausted_until != null
   return (
-    <td className={`px-3 py-2 whitespace-nowrap ${mono ? "tabular-nums" : ""}`}>{children}</td>
+    <tr className="border-b border-line/60 last:border-b-0">
+      <Td>
+        <span className="font-mono text-[13px] font-medium text-ink">{model.id}</span>
+        <span className="ml-2 text-xs text-faint">{model.owned_by}</span>
+      </Td>
+      <Td>{model.tier === "" ? <span className="text-faint">sin dato</span> : <TierChip tier={model.tier} />}</Td>
+      <Td mono>{TOKEN_OR_SIN_DATO(model.max_input_tokens)}</Td>
+      <Td mono>{model.input.join(", ")}</Td>
+      <Td mono>{TOOLS_OR_SIN_DATO(model.tools)}</Td>
+      <Td mono>{model.reasoning_mode}</Td>
+      <Td>
+        <StateChip available={model.state.available} degraded={degraded} />
+        {model.state.failures > 0 && (
+          <span className="ml-2 font-mono text-[11px] text-faint">
+            {model.state.failures} fallos
+          </span>
+        )}
+      </Td>
+      <Td mono>
+        {degraded ? (
+          <span className="text-chip-amber-text">
+            abierto hasta {model.state.quota_exhausted_until}
+          </span>
+        ) : (
+          <span className="text-body">cerrado</span>
+        )}
+      </Td>
+      <Td>
+        <span className="text-faint">sin dato</span>
+      </Td>
+    </tr>
   )
 }
