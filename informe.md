@@ -3,8 +3,7 @@
 > Documento vivo. Registra qué se construye, cómo, **qué se rompió en el camino y cómo se
 > detectó y resolvió**. Se actualiza al final de cada unidad de trabajo.
 >
-> Última actualización: 2026-11-14 · rama `dev` en `8ab02ad` · **286 tests** en verde;
-> API de lectura y SSE en `feature/nau-16-read-api` con **301 tests**, en verificación.
+> Última actualización: 2026-11-14 · rama `dev` en `2fcd6ef` · **304 tests** en verde.
 
 ---
 
@@ -65,7 +64,7 @@ el gateway apaga el razonamiento de verdad en tareas triviales. No siempre fue a
 | NAU-10 | Fallback, circuit breaker y limitador | hecho + verificado | `0bb5bbc` |
 | NAU-13 | Log de decisiones sin contenido, cableado en el proxy | hecho | `14d0ac7` |
 | NAU-14/15 | Benchmark y evaluación offline | pendiente | — |
-| API de lectura | `/v1/decisions`, `/v1/playground/decide`, `/v1/stream` | implementado, en verificación | `feature/nau-16-read-api` |
+| NAU-16a | `/v1/decisions`, `/v1/playground/decide`, `/v1/stream` | hecho + verificado | `2fcd6ef` |
 | NAU-16/17 | Dashboard React | pendiente | — |
 | NAU-12/11 | Estabilidad conversacional y presupuesto de decisión | pendiente | — |
 
@@ -573,7 +572,25 @@ línea (comprobado por mutación: `assert 'fallback=' not in 'chat_casual…eek-
 forma perezosa tiene que cargarse **en todos** los caminos que lo leen; si no, el camino olvidado
 no falla, **decide mal y en silencio**.
 
-### 5.21 Errores menores, todos reales
+### 5.21 Una cabecera documentada que no servía para lo que documentaba
+
+**Síntoma:** `x-nan-auto-decision-id` prometía ser "id para consultar el detalle" (spec 8), pero
+llevaba el identificador de **Clef**, que no es clave del log. `GET /v1/decisions/{id}` respondía
+`404` a todo lo que devolvía la propia cabecera.
+
+**Causa:** la cabecera existía antes que la ruta que la haría útil. Nadie la probó contra el caso
+de uso que le daba sentido.
+
+**Detección:** el verificador, siguiendo la promesa de la spec en lugar de la implementación.
+
+**Resolución:** la cabecera lleva ahora el id de la fila, y queda **vacía** cuando no se registró
+nada, porque entonces no hay detalle que consultar. Dos tests que fijaban el id de Clef se
+actualizaron al contrato real.
+
+**Lección:** una cabecera con un propósito declarado y sin nadie que lo ejerza es deuda silenciosa.
+Si el documento dice "sirve para X", tiene que existir un test que haga X.
+
+### 5.22 Errores menores, todos reales
 
 | Error | Detección | Resolución |
 |---|---|---|
@@ -608,7 +625,7 @@ Todo lo que sigue está **observado**, no narrado:
 
 | Qué | Resultado |
 |---|---|
-| Suite del servidor | **286 passed** |
+| Suite del servidor | **304 passed** |
 | Lint y tipos | `ruff` limpio · `pyright` 0 errores, 0 warnings |
 | Contrato de Clef | 3 fixtures reales, parser con 9 tests |
 | Catálogo real | 18 → 12 servibles; 6 excluidos con motivo |
