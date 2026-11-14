@@ -1,0 +1,20 @@
+# Router profiles (spec 7.3). Weights are initial and adjusted with the dev split.
+profiles:
+  nan-auto:
+    label: balanced
+    q_weight: 1.0
+    l_weight: 0.5
+    premium: only_difficulty_gte_3
+    reasoning: follow_needs_reasoning
+  nan-auto-fast:
+    label: fast
+    q_weight: 0.6
+    l_weight: 1.0
+    premium: never
+    reasoning: off_unless_difficulty_gte_4
+  nan-auto-quality:
+    label: quality
+    q_weight: 1.0
+    l_weight: 0.2
+    premium: yes
+    reasoning: on_if_difficulty_gte_2

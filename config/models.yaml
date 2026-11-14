@@ -1,0 +1,63 @@
+# Capability tiers and flags for known NaN chat models.
+# Source: community API guide (September 2026). The catalog is rebuilt at
+# startup from GET /v1/models; this file only contributes metadata (spec 4).
+# Unknown model ids fall back to "generalist" defaults.
+models:
+  qwen3.6:
+    context: 256K
+    input: [text, image]
+    tools: true
+    reasoning:
+      mode: togglable
+      off: { chat_template_kwargs: { enable_thinking: false } }
+      on: { chat_template_kwargs: { enable_thinking: true } }
+  deepseek-v4-flash:
+    context: 1M
+    input: [text]  # image per card: [VERIFICAR]
+    tools: true
+    reasoning:
+      mode: effort
+      levels: [low, medium, high]
+    notes: json_schema unsupported, use json_object with schema in prompt [VERIFICAR]
+  mimo-v2.5:
+    context: 1M
+    input: [text, image, audio]
+    tools: true
+    reasoning:
+      mode: always_on
+  glm5.3:
+    context: 1M
+    input: [text]
+    tools: true
+    reasoning:
+      mode: always_on  # no documented switch
+    premium: true
+  qwen3.8-flash:
+    context: 262K
+    input: [text, image]
+    tools: xml
+    reasoning:
+      mode: always_on  # no documented switch
+  glm5.3-flash:
+    context: 1M
+    input: [text, image]
+    tools: true
+    reasoning:
+      mode: always_on
+  gemma4:
+    context: 256K
+    input: [text, image]
+    tools: xml
+    reasoning:
+      mode: togglable_default_off
+      off: {}
+      on: { chat_template_kwargs: { enable_thinking: true } }
+  minimax-h3:
+    premium: true
+    excluded_from_policy: true  # no data yet (spec 4)
+
+# Initial tiers [HIPOTESIS]: replaced by measured quality matrix (spec 11).
+tiers:
+  t1_fast: [gemma4, qwen3.8-flash, glm5.3-flash]
+  t2_generalist: [qwen3.6, deepseek-v4-flash]
+  t3_max: [glm5.3, mimo-v2.5]
