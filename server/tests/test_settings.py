@@ -20,12 +20,13 @@ def test_settings_defaults_match_spec(monkeypatch, tmp_path) -> None:
 
 def test_settings_reads_env_file(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("NAN_KEY", raising=False)
-    monkeypatch.setattr("os.getcwd", lambda: str(tmp_path))
-    env_file = tmp_path / ".env"
-    env_file.write_text(textwrap.dedent("""\
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        textwrap.dedent("""\
         NAN_KEY=sk-test-123
         CLEF_PROVIDER=nan
-        """))
-    settings = Settings(_env_file=env_file)
+        """)
+    )
+    settings = Settings()
     assert settings.nan_key == "sk-test-123"
     assert settings.clef_provider == "nan"
