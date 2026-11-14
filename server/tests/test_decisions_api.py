@@ -333,7 +333,11 @@ async def test_the_playground_sees_the_same_inventory_as_the_routed_path(
     assert response.status_code == 200
     payload = response.json()
     assert "fallback=" not in payload["reason"]  # a real decision, not a fail-open
-    assert payload["model"] in {"gemma4", "deepseek-v4-flash"}
+    # NAU-18 rows prefer deepseek-v4-flash (the fastest measured cell), but the
+    # honour-off penalty re-elects qwen3.8-flash for off requests: the penalty
+    # stacks on a measured latency that already includes deepseek's reasoning.
+    # Follow-up: penalty-vs-measured-latency arbitration (odd/tasks/nau-18-policy-v2.md).
+    assert payload["model"] == "qwen3.8-flash"
     assert payload["candidates"]  # the ranking came from a populated inventory
     assert registry.models  # and the refresh actually happened
 

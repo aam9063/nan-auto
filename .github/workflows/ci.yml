@@ -7,6 +7,10 @@ permissions:
 jobs:
   server:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # pyproject.toml lives in server/, not at the repo root.
+        working-directory: server
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
@@ -21,7 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4   # version resolved from "packageManager" in web/package.json
+      # The action reads "packageManager" from the ROOT package.json, which does
+      # not exist in this monorepo; the version lives in web/package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
       - uses: actions/setup-node@v6
         with:
           node-version: 24
