@@ -53,17 +53,50 @@ La política decide en abstracto; cada modelo enciende y apaga el razonamiento d
 
 ## Tareas
 
-- [ ] NAU-09-T1 `togglable` (`qwen3.6`): `off` y `on` traducen a `chat_template_kwargs.enable_thinking`. Aceptación: dos tests, un parámetro cada uno. Riesgo RDD: medio
-- [ ] NAU-09-T2 `effort` (`deepseek-v4-flash`): `low`/`medium`/`high` traducen a `reasoning_effort`. Aceptación: tres tests, `off` no manda `reasoning_effort`. Riesgo RDD: medio
-- [ ] NAU-09-T3 `togglable_default_off` (`gemma4`): solo `on` y superiores activan. Aceptación: `low` se trata como apagado; `high` enciende. Riesgo RDD: medio
-- [ ] NAU-09-T4 `always_on` (`mimo-v2.6-flash`, `glm5.3-flash`, `glm5.3`, `qwen3.8-flash`): nunca se envían campos. Aceptación: un test por modelo, todos vacíos. Riesgo RDD: bajo
-- [ ] NAU-09-T5 Modelo desconocido y nivel desconocido: sin campos y sin excepción. Aceptación: ambos devuelven `{}`. Riesgo RDD: bajo
+- [x] NAU-09-T1 `togglable` (`qwen3.6`): `off` y `on` traducen a `chat_template_kwargs.enable_thinking`. Aceptación: dos tests, un parámetro cada uno. Riesgo RDD: medio
+- [x] NAU-09-T2 `effort` (`deepseek-v4-flash`): `low`/`medium`/`high` traducen a `reasoning_effort`. Aceptación: tres tests, `off` no manda `reasoning_effort`. Riesgo RDD: medio
+- [x] NAU-09-T3 `togglable_default_off` (`gemma4`): solo `on` y superiores activan. Aceptación: `low` se trata como apagado; `high` enciende. Riesgo RDD: medio
+- [x] NAU-09-T4 `always_on` (`mimo-v2.6-flash`, `glm5.3-flash`, `glm5.3`, `qwen3.8-flash`): nunca se envían campos. Aceptación: un test por modelo, todos vacíos. Riesgo RDD: bajo
+- [x] NAU-09-T5 Modelo desconocido y nivel desconocido: sin campos y sin excepción. Aceptación: ambos devuelven `{}`. Riesgo RDD: bajo
 
 ## Evidencia de verificación
 
 | Tarea | Prueba | Resultado | Commit |
 |---|---|---|---|
-| — | pendiente | — | — |
+| T1 | `uv run pytest tests/test_reasoning.py` | RED de colección → 4 passed | `feat(router_core)` |
+| T2 | idem | RED: 4 fallos con la rama `effort` en stub | `feat(router_core)` |
+| T3 | idem | **RED con stub temporal**, no con función ausente: el módulo ya estaba completo | `feat(router_core)` |
+| T4 | idem | RED con el mismo stub: 16 casos `always_on` | `feat(router_core)` |
+| T5 | idem | RED con el stub, incluida la pureza (mutar el resultado corrompía la ficha) | `feat(router_core)` |
+| suite | `uv run pytest` | 170 → **204 passed** | `feat(router_core)` |
+| estático | `ruff check .` + `pyright` | 0 errores, 0 warnings | `feat(router_core)` |
+
+### Tabla 7.4 verificada con la ficha real
+
+```
+glm5.3-flash       off     -> {}
+qwen3.6            high    -> {'chat_template_kwargs': {'enable_thinking': True}}
+qwen3.6            off     -> {'chat_template_kwargs': {'enable_thinking': False}}
+deepseek-v4-flash  high    -> {'reasoning_effort': 'high'}
+deepseek-v4-flash  off     -> {}
+gemma4             low     -> {}
+gemma4             high    -> {'chat_template_kwargs': {'enable_thinking': True}}
+mimo-v2.6-flash    high    -> {}
+hy4 (sin ficha)    high    -> {}
+inventario intacto tras mutar el resultado: True
+```
+
+### Hallazgo que afecta al producto
+
+La palanca de latencia que el spec llama "probablemente la mayor" — apagar el razonamiento en
+tareas simples — **solo funciona en `gemma4` y `qwen3.6`**. De los tres modelos del escalón T1,
+`qwen3.8-flash` y `glm5.3-flash` son `always_on`, así que una petición trivial que cae en
+`glm5.3-flash` con `reasoning=off` en realidad razona igual. La política pide `off` y el modelo
+lo ignora.
+
+Decisión pendiente del humano: penalizar en la puntuación a los modelos `always_on` cuando la
+política quiere `off`, para que el escalón T1 caiga en `gemma4`. Es un cambio de comportamiento
+visible y toca constantes ya marcadas `[HIPÓTESIS]`.
 
 ## Revisión nativa (RDD)
 
@@ -73,8 +106,8 @@ La política decide en abstracto; cada modelo enciende y apaga el razonamiento d
 
 ## Progreso
 
-Documento abierto.
+NAU-09 implementada y verificada contra la ficha real. Pendiente el merge.
 
 ## Siguiente paso
 
-T1 a T5.
+NAU-07: proxy `chat/completions` sin streaming.
