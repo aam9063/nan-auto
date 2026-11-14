@@ -55,18 +55,50 @@ Es el primer paso del pipeline y el que alimenta el filtro de capacidades. Si el
 
 ## Tareas
 
-- [ ] NAU-04-T1 Modelos Pydantic del cuerpo (`ChatRequest`, mensajes, partes) tolerantes a campos extra. Aceptación: un cuerpo real de Cursor con campos desconocidos se valida. Riesgo RDD: medio
-- [ ] NAU-04-T2 `has_image` / `has_audio` sobre partes `image_url` e `input_audio`, con `content` string y lista. Aceptación: un mensaje con imagen lo marca; uno de solo texto no. Riesgo RDD: medio
-- [ ] NAU-04-T3 `est_tokens` sobre todos los mensajes más las partes no textuales. Aceptación: un mensaje de 4000 caracteres estima ~1000 tokens. Riesgo RDD: bajo
-- [ ] NAU-04-T4 `has_tools`, `tool_choice`, `response_format`, `stream`. Aceptación: un cuerpo con `tools` y `response_format: json_schema` se refleja tal cual. Riesgo RDD: medio
-- [ ] NAU-04-T5 `turns`, `has_code_fences`. Aceptación: tres mensajes dan tres turnos; un fence los detecta. Riesgo RDD: bajo
-- [ ] NAU-04-T6 `conversation_key`: cabecera `x-conversation-id` si existe, si no hash estable de system prompt + primer mensaje. Aceptación: dos peticiones de la misma conversación dan la misma clave, y sin cabecera también. Riesgo RDD: medio
+- [x] NAU-04-T1 Modelos Pydantic del cuerpo (`ChatRequest`, mensajes, partes) tolerantes a campos extra. Aceptación: un cuerpo real de Cursor con campos desconocidos se valida. Riesgo RDD: medio
+- [x] NAU-04-T2 `has_image` / `has_audio` sobre partes `image_url` e `input_audio`, con `content` string y lista. Aceptación: un mensaje con imagen lo marca; uno de solo texto no. Riesgo RDD: medio
+- [x] NAU-04-T3 `est_tokens` sobre todos los mensajes más las partes no textuales. Aceptación: un mensaje de 4000 caracteres estima ~1000 tokens. Riesgo RDD: bajo
+- [x] NAU-04-T4 `has_tools`, `tool_choice`, `response_format`, `stream`. Aceptación: un cuerpo con `tools` y `response_format: json_schema` se refleja tal cual. Riesgo RDD: medio
+- [x] NAU-04-T5 `turns`, `has_code_fences`. Aceptación: tres mensajes dan tres turnos; un fence los detecta. Riesgo RDD: bajo
+- [x] NAU-04-T6 `conversation_key`: cabecera `x-conversation-id` si existe, si no hash estable de system prompt + primer mensaje. Aceptación: dos peticiones de la misma conversación dan la misma clave, y sin cabecera también. Riesgo RDD: medio
 
 ## Evidencia de verificación
 
 | Tarea | Prueba | Resultado | Commit |
 |---|---|---|---|
-| — | pendiente | — | — |
+| T1 | `uv run pytest tests/test_features.py` | RED de colección (`No module named 'nan_auto.router_core.features'`) | `feat(router_core)` |
+| T2 | idem | RED: `has_image=False` / `has_audio=False` en 4 casos | `feat(router_core)` |
+| T3 | idem | RED: `est_tokens=0` en 5 casos | `feat(router_core)` |
+| T4 | idem | RED: `tool_choice=None`, `has_tools=False`, `response_format='text'` | `feat(router_core)` |
+| T5 | idem | RED: `turns=0`, `has_code_fences=False` | `feat(router_core)` |
+| T6 | idem | RED: `conversation_key=''` en 4 casos | `feat(router_core)` |
+| suite | `uv run pytest` | 97 → **131 passed** | `feat(router_core)` |
+| estático | `ruff check .` + `pyright` | 0 errores, 0 warnings | `feat(router_core)` |
+
+Sonda propia de privacidad (canario `SECRETO-DE-USUARIO-9911` en system, user, imagen y audio):
+
+```
+RequestFeatures(has_image=True, has_audio=True, est_tokens=192, has_tools=True,
+                tool_choice=None, response_format='json_schema', stream=True,
+                turns=3, has_code_fences=True,
+                conversation_key='75fa538970cf197517cf5b228ffb90c2')
+canary leaked en el repr: False
+```
+
+Sonda propia de la clave de conversación:
+
+| Caso | Resultado |
+|---|---|
+| misma conversación con más turnos | igual |
+| primer mensaje distinto | distinta |
+| system distinto | distinta |
+| cabecera `x-conversation-id` presente | `c-1` (manda la cabecera) |
+
+### Decisiones que el worker dejó al padre
+
+- `response_format` ausente → `"text"` (default de OpenAI; la tabla del spec solo lista los tres valores).
+- Cada parte no textual suma un piso fijo de ~85 tokens; el spec no da número.
+- `tool_choice` se refleja tal cual, sin normalizar.
 
 ## Revisión nativa (RDD)
 
@@ -76,8 +108,8 @@ Es el primer paso del pipeline y el que alimenta el filtro de capacidades. Si el
 
 ## Progreso
 
-Documento abierto.
+NAU-04 implementada y verificada. Pendiente el merge y el assess del slice.
 
 ## Siguiente paso
 
-T1 y T2.
+NAU-06: filtro de capacidades y política v1, que consume estas features.
