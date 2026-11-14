@@ -94,9 +94,12 @@ tareas simples — **solo funciona en `gemma4` y `qwen3.6`**. De los tres modelo
 `glm5.3-flash` con `reasoning=off` en realidad razona igual. La política pide `off` y el modelo
 lo ignora.
 
-Decisión pendiente del humano: penalizar en la puntuación a los modelos `always_on` cuando la
-política quiere `off`, para que el escalón T1 caiga en `gemma4`. Es un cambio de comportamiento
-visible y toca constantes ya marcadas `[HIPÓTESIS]`.
+**Resuelto** en `fix/locked-reasoning-penalty`: la puntuación de la política resta
+`_LOCKED_REASONING_PENALTY` (0.3) cuando pide `off` y la ficha del modelo dice `always_on`.
+Los dos modelos afectados comparten escalón y `fit`, así que sin la penalización el desempate
+lo decidía el orden del inventario. Verificado: un saludo pasa de `glm5.3-flash` (razonaba
+igual) a `gemma4`, cuyos parámetros de razonamiento salen vacíos porque su ficha lo deja
+apagado por defecto.
 
 ## Revisión nativa (RDD)
 
