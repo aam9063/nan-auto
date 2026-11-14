@@ -3,7 +3,8 @@
 > Documento vivo. Registra qué se construye, cómo, **qué se rompió en el camino y cómo se
 > detectó y resolvió**. Se actualiza al final de cada unidad de trabajo.
 >
-> Última actualización: 2026-11-14 · rama `dev` en `14d0ac7` · 265 tests en verde.
+> Última actualización: 2026-11-14 · rama `dev` en `4b9679a` · 265 tests; NAU-10 en
+> `feature/nau-10-fallback` con **284 tests** esperando verificación y merge.
 
 ---
 
@@ -61,13 +62,14 @@ el gateway apaga el razonamiento de verdad en tareas triviales. No siempre fue a
 | NAU-09 | Adaptador de razonamiento por modelo | hecho | `28e2c37` |
 | — | Calibración medida del razonamiento | hecho | `bc95661` |
 | — | Preferencia por modelos que respetan `off` | hecho | `2e18f03` |
-| NAU-10 | Fallback y circuit breaker | pendiente | — |
+| NAU-10 | Fallback, circuit breaker y limitador | implementado, en verificación | `feature/nau-10-fallback` |
 | NAU-13 | Log de decisiones sin contenido, cableado en el proxy | hecho | `14d0ac7` |
 | NAU-14/15 | Benchmark y evaluación offline | pendiente | — |
 | NAU-16/17 | Dashboard | pendiente | — |
 | NAU-12/11 | Estabilidad conversacional y presupuesto de decisión | pendiente | — |
 
-**Números reales**, no estimados: 265 tests, `ruff` limpio, `pyright` 0 errores.
+**Números reales**, no estimados: 265 tests en `dev`, 284 con NAU-10; `ruff` limpio y
+`pyright` 0 errores en ambos.
 
 ---
 
@@ -150,7 +152,33 @@ tablas: ['REQUEST_LOG', 'DECISION_ANSWER', 'ATTEMPT']
 columnas con el prompt o la clave: NINGUNA
 ```
 
-### 4.6 Proxy y streaming (NAU-07/08)
+### 4.6 Fallback y circuit breaker (NAU-10)
+
+El recorrido de candidatos cambia de modelo **solo antes del primer byte**: una vez enviado algo,
+reintentar duplicaría contenido. Presupuesto de un intento más dos reintentos, saltando los
+modelos que el breaker tiene abiertos, respetando `Retry-After` en 429, y devolviendo el **último
+estado real** cuando la cadena se agota (nunca un 500 genérico).
+
+Dos decisiones de diseño que valen justificación:
+
+- **El reloj del breaker es inyectable** (`time.monotonic`, no `datetime.now`). Es la lección del
+  §5.11 aplicada: un componente con reloj propio se testea sin dormir y no se rompe si alguien
+  ajusta la hora del sistema.
+- **Solo se abre el modelo que falló.** Una cuota agotada (402) no caduca por tiempo: solo
+  `renew_quota()` la reabre. Y un candidato que el presupuesto de reintentos nunca alcanzó **no se
+  marca como fallido**: culpar a un modelo sano de la caída de otro degrada el enrutado durante
+  todo el cooldown.
+
+Verificado con servidor real y clave real:
+
+```
+petición 1: 200 modelo=gemma4 fallback=''
+petición 2: 200 modelo=gemma4 fallback=''
+passthrough (gemma4 directo): 200, sin cabecera x-nan-auto-model
+filas: 2 de petición, 2 de intento, ambas success/200
+```
+
+### 4.7 Proxy y streaming (NAU-07/08)
 
 `POST /v1/chat/completions` compone todo y reenvía. Verificado con HTTP real:
 
@@ -371,7 +399,73 @@ fusionó.
 **Lección:** "trabaja en la rama X" no es una instrucción verificable para quien no puede ejecutar
 `git`. Lo verificable es **revisar la rama antes de commitear**, que es lo que pasó.
 
-### 5.11 Un test fijaba una fecha y empezó a fallar para siempre
+### 5.11 Un test puede fosilizar comportamiento obsoleto
+
+**Síntoma:** el worker se negó a implementar NAU-10 porque un test existente chocaba con la spec.
+Paró y pidió decisión, en vez de romper el test o de rendirse.
+
+**Causa:** `test_upstream_error_before_first_byte_propagates_with_status` fijaba
+`len(upstream.calls) == 1` para una petición **en streaming** cuyo upstream siempre responde 503.
+Ese test no fijaba un contrato: fijaba la **limitación anterior** a NAU-10. La spec 5.5 permite
+cambiar de modelo justo ahí —antes del primer byte— porque el cliente no vio nada.
+
+**Detección:** el propio worker, al chocar de frente en vez de improvisar.
+
+**Resolución:** se autorizó actualizar **ese único test**, y se exigió que quedara **más fuerte**,
+no más laxo: 3 llamadas al upstream, el cliente recibe el 503 real, ningún candidato repetido, y
+la cadena completa verificada en `x-nan-auto-fallback`.
+
+**Lección:** la pregunta correcta ante un test en rojo no es "¿cómo lo hago pasar?" sino "**¿qué
+está afirmando este test y sigue siendo verdad?**". Un test verde puede ser el obstáculo para
+cumplir la spec.
+
+### 5.12 Un worker se colgó y dejó el contrato escrito
+
+**Síntoma:** el worker de NAU-10 murió por *timeout* sin implementación.
+
+**Qué se hizo:** antes de relanzar nada, se revisó el árbol. Había **600 líneas de tests** y cero
+implementación: el diseño ya estaba hecho, escrito como contrato ejecutable.
+
+**Resolución:** el trabajo se partió. El módulo puro (`fallback.py`, breaker y limitador) lo
+escribió el padre contra esos tests; la integración en el proxy fue a un worker nuevo con un
+encargo mucho más angosto ("haz pasar estos tests").
+
+**Lección:** un fallo de agente no es un fallo de trabajo. Lo primero es **leer lo que dejó**;
+relanzar a ciegas habría tirado el diseño.
+
+### 5.13 El breaker culpaba a modelos que nunca se intentaron
+
+**Síntoma:** el worker lo reportó como discrepancia en lugar de taparla: para satisfacer un test,
+marcaba como fallidos **todos** los candidatos de la cadena, incluso los que el presupuesto de
+reintentos nunca alcanzó.
+
+**Causa:** el test pedía que una cadena agotada dejara todo abierto. La implementación obediente
+marcó también los no intentados.
+
+**Resolución:** se corrigió la **semántica**, no el test: solo se abre lo que se intentó. El test
+se reescribió con la regla honesta y quedó más exigente — recorre una cadena de diez candidatos
+en cuatro pasadas, comprueba que cada uno se intenta **exactamente una vez** y que al final
+responde `no_model` sin tocar el upstream.
+
+**Lección:** un test puede pedir algo técnicamente alcanzable y a la vez equivocado. Cuando el
+test y el modelo mental chocan, el que cede es el test.
+
+### 5.14 El lint de los tests lo paga el padre
+
+**Síntoma:** `ruff check .` fallaba con 6 errores, todos en los ficheros de test del worker
+colgado.
+
+**Causa:** el contrato se escribió en una unidad y se implementó en otra, y al segundo worker se le
+prohibió tocar los tests. El que escribe los tests y el que no puede arreglarlos eran dos agentes
+distintos.
+
+**Resolución:** el padre cerró los seis (imports, `contextlib.suppress`, línea larga, dos variables
+sin usar). La suite vuelve a estar limpia en todo el repo.
+
+**Lección:** la propiedad del pipeline verde es del orquestador. Quien escribe un fichero debe
+poder dejarlo limpio, o el padre debe revisarlo antes de exigir `ruff check .` global.
+
+### 5.15 Un test fijaba una fecha y empezó a fallar para siempre
 
 **Síntoma:** el worker entregó el cableado con `262 passed, 1 failed`. El fallo no tenía relación
 con su cambio.
@@ -388,7 +482,7 @@ constante muerta.
 **Lección:** un test con una fecha fija es una bomba de tiempo con mecha conocida. El reloj de
 pared es una dependencia externa: o se inyecta, o se expresa en términos relativos.
 
-### 5.12 El cliente HTTP usaba el timeout por defecto de 5 segundos
+### 5.16 El cliente HTTP usaba el timeout por defecto de 5 segundos
 
 **Síntoma:** el gateway respondía **502** con un modelo que en realidad funcionaba.
 
@@ -406,7 +500,7 @@ regresión que exige un timeout holgado y comprueba el valor efectivo del client
 **Lección:** `TestClient` y `respx` no tienen reloj ni red. Hay defectos que solo aparecen con un
 servidor de verdad generando tokens de verdad. Este habría roto la demo en vivo, no en CI.
 
-### 5.13 El primer arranque decidía con el registro frío
+### 5.17 El primer arranque decidía con el registro frío
 
 **Síntoma:** un saludo trivial eligió `mimo-v2.6-flash` (escalón máximo, el más caro) en la
 primera petición tras arrancar; en la segunda, el mismo saludo eligió `qwen3.8-flash` (escalón
@@ -423,7 +517,7 @@ registro caliente, el saludo aterriza en T1 con razonamiento apagado.
 **Estado:** queda como pendiente de diseño (NAU-11) decidir si el arranque debe precalentar el
 registro; hoy la primera decisión puede pagar el refresco.
 
-### 5.14 Errores menores, todos reales
+### 5.18 Errores menores, todos reales
 
 | Error | Detección | Resolución |
 |---|---|---|
@@ -458,7 +552,7 @@ Todo lo que sigue está **observado**, no narrado:
 
 | Qué | Resultado |
 |---|---|
-| Suite del servidor | **265 passed** |
+| Suite del servidor | **284 passed** (265 en `dev` sin NAU-10) |
 | Lint y tipos | `ruff` limpio · `pyright` 0 errores, 0 warnings |
 | Contrato de Clef | 3 fixtures reales, parser con 9 tests |
 | Catálogo real | 18 → 12 servibles; 6 excluidos con motivo |
@@ -484,7 +578,6 @@ Todo lo que sigue está **observado**, no narrado:
 
 **Pendiente técnico:**
 
-- NAU-10: fallback y circuit breaker (alto riesgo).
 - NAU-11: presupuesto de decisión de 800 ms con falla abierta. Con Clef medido en 450–570 ms, el
   margen es estrecho: conviene decidir si sube el presupuesto o si se acepta más fallback.
 - NAU-12: estabilidad por conversación.
@@ -509,6 +602,8 @@ Todo lo que sigue está **observado**, no narrado:
    vacío.** Los tres son trampas de plataforma, no de lógica.
 6. **Decir "no observé RED" y demostrarlo con mutación** es más útil que fingir un TDD que no
    pasó.
-7. **Un test verde no es un sistema que funciona.** El timeout de 5 s y el test con fecha fija
+7. **Un test puede fosilizar una limitación y volverse el obstáculo.** Ante un rojo, la pregunta
+   es qué afirma el test y si sigue siendo verdad, no cómo hacerlo pasar.
+8. **Un test verde no es un sistema que funciona.** El timeout de 5 s y el test con fecha fija
    pasaron por delante de 263 tests. Lo que los encontró fue un servidor real, una petición real
    y un reloj que avanzó.

@@ -218,10 +218,19 @@ async def test_streaming_response_sets_decision_headers() -> None:
     assert call.headers["x-nan-auto-model"]
     assert call.headers["x-nan-auto-decision-id"] == "decision-canned"
     assert call.headers["x-nan-auto-reason"]
-    assert call.headers["x-nan-auto-fallback"] == ""
+    assert "x-nan-auto-fallback" not in call.headers  # only when a fallback happened
 
 
 async def test_upstream_error_before_first_byte_propagates_with_status() -> None:
+    """A stream that has emitted no byte may switch models (spec 5.5, NAU-10).
+
+    The always-503 upstream walks the candidate chain (spec 5.3 caps it at two
+    retries, three candidates here) and the client still receives the last
+    real status with the upstream body, never a generic 500; the fallback
+    header lists the models tried before the final one, in policy order. The
+    pre-NAU-10 pin of a single upstream call recorded a limitation, not a
+    contract: before the first byte is exactly where switching is safe.
+    """
     upstream = ScriptedUpstream(
         lambda: httpx.Response(
             503, json={"error": {"message": "overloaded", "type": "server_error"}}
@@ -235,8 +244,12 @@ async def test_upstream_error_before_first_byte_propagates_with_status() -> None
         )
     assert response.status_code == 503
     assert response.json()["error"]["message"] == "overloaded"
-    assert len(upstream.calls) == 1
-    assert "x-nan-auto-model" in response.headers
+    sent_models = [json.loads(call.content)["model"] for call in upstream.calls]
+    assert len(upstream.calls) == 3  # the chain was walked: one attempt + two retries
+    assert len(sent_models) == len(set(sent_models))  # each candidate at most once
+    assert response.headers["x-nan-auto-fallback"] == ",".join(sent_models[:-1])
+    assert response.headers["x-nan-auto-model"] == sent_models[-1]
+    assert "x-nan-auto-decision-id" in response.headers
 
 
 async def test_mid_stream_break_propagates_and_does_not_retry() -> None:

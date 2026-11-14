@@ -22,3 +22,9 @@ class Settings(BaseSettings):
     # surfaces as a transport error and a 502. Long by design: the decision has
     # its own budget (decision_timeout_ms); this one is for generating tokens.
     upstream_timeout_s: float = 120.0
+    # Retry walk (spec 5.3 caps it at two retries) and circuit breaker (5.5).
+    fallback_max_retries: int = 2
+    breaker_threshold: int = 3
+    breaker_cooldown_s: float = 60.0
+    key_concurrency_limit: int = 8
+    quota_cooldown_s: float = 3600.0
