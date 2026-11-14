@@ -41,3 +41,19 @@ def test_settings_reads_env_file_from_repo_root(tmp_path, monkeypatch) -> None:
     (repo_root / ".env").write_text("NAN_KEY=sk-root-456\n")
     monkeypatch.chdir(server_dir)
     assert Settings().nan_key == "sk-root-456"
+
+
+def test_upstream_timeout_is_not_the_httpx_default(tmp_path, monkeypatch) -> None:
+    """A model completion can take minutes; httpx's 5 s default would 502 it."""
+    monkeypatch.chdir(tmp_path)
+    assert Settings().upstream_timeout_s >= 60.0
+
+
+def test_default_client_uses_the_configured_upstream_timeout(tmp_path, monkeypatch) -> None:
+    from nan_auto.gateway.app import default_client
+
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(upstream_timeout_s=180.0)
+    client = default_client(settings)
+    assert client.timeout.read == 180.0
+    assert client.timeout.connect == 10.0

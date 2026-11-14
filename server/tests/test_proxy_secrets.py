@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+import pytest
 import respx
 from httpx import ASGITransport
 
@@ -303,3 +304,119 @@ async def test_transport_failure_replies_openai_shaped_without_the_key() -> None
     assert_key_absent(response)
     payload = response.json()
     assert "message" in payload["error"] and payload["error"]["type"]
+
+
+# --- regression pins from the NAU-13 wiring review -----------------------------
+# New pins only: each one proves an existing behavior a verifier found untested.
+# If one of these fails, it is a defect, not a test to adjust.
+
+
+@respx.mock
+async def test_non_alias_passthrough_keeps_the_key_off_every_surface() -> None:
+    app = make_app(StaticProvider())
+    upstream = respx.post(UPSTREAM_CHAT).mock(
+        return_value=httpx.Response(200, json={"id": "up-1", "choices": []})
+    )
+    response = await post(
+        app, {"model": "other-vendor-model", "messages": [{"role": "user", "content": "hi"}]}
+    )
+    assert response.status_code == 200
+    assert_key_absent(response)
+    # The only sanctioned path: inbound header -> upstream header, verbatim.
+    assert upstream.calls.last.request.headers["authorization"] == f"Bearer {CANARY}"
+
+
+@respx.mock
+async def test_unparseable_body_keeps_the_key_off_every_surface() -> None:
+    app = make_app(StaticProvider())
+    upstream = respx.post(UPSTREAM_CHAT).mock(
+        return_value=httpx.Response(200, json={"id": "up-1", "choices": []})
+    )
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            content=b'{"model": oops',
+            headers={**AUTH, "Content-Type": "application/json"},
+        )
+    assert response.status_code == 200
+    assert_key_absent(response)
+    assert upstream.calls.last.request.headers["authorization"] == f"Bearer {CANARY}"
+
+
+@respx.mock
+async def test_non_alias_passthrough_hides_a_failing_transport_exception_text() -> None:
+    # The transport error itself carries the canary in its message; nothing that
+    # surfaces to the client (body, headers or exception text) may echo it.
+    app = make_app(StaticProvider())
+    respx.post(UPSTREAM_CHAT).mock(
+        side_effect=httpx.ConnectError(f"refused while authenticating {CANARY}")
+    )
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": "other-vendor-model", "messages": [{"role": "user", "content": "hi"}]},
+            headers=AUTH,
+        )
+    assert response.status_code == 502
+    assert_key_absent(response)
+
+
+@respx.mock
+async def test_unparseable_body_hides_a_failing_transport_exception_text() -> None:
+    app = make_app(StaticProvider())
+    respx.post(UPSTREAM_CHAT).mock(
+        side_effect=httpx.ConnectError(f"refused while authenticating {CANARY}")
+    )
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            content=b'{"model": oops',
+            headers={**AUTH, "Content-Type": "application/json"},
+        )
+    assert response.status_code == 502
+    assert_key_absent(response)
+
+
+@respx.mock
+async def test_passthrough_forwards_a_body_carrying_its_own_nan_auto_byte_for_byte() -> None:
+    provider = StaticProvider()
+    app = make_app(provider)
+    raw = json.dumps(
+        {
+            "model": "other-vendor-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "nan_auto": {"profile": "zeta", "bogus": True},
+        }
+    ).encode()
+    upstream = respx.post(UPSTREAM_CHAT).mock(
+        return_value=httpx.Response(200, json={"id": "up-1", "choices": []})
+    )
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            content=raw,
+            headers={**AUTH, "Content-Type": "application/json"},
+        )
+    assert response.status_code == 200
+    assert upstream.calls.last.request.content == raw  # byte-for-byte, nan_auto kept
+    assert upstream.calls.last.request.headers["authorization"] == f"Bearer {CANARY}"
+    assert provider.calls == 0  # no decision was made
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [400, 401, 429, 500])
+async def test_upstream_error_status_does_not_leak_the_key(status: int) -> None:
+    app = make_app(StaticProvider())
+    upstream = respx.post(UPSTREAM_CHAT).mock(
+        return_value=httpx.Response(
+            status, json={"error": {"message": "upstream said no", "type": "server_error"}}
+        )
+    )
+    response = await post(app, chat_body())
+    assert response.status_code == status
+    assert_key_absent(response)
+    assert upstream.calls.last.request.headers["authorization"] == f"Bearer {CANARY}"

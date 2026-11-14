@@ -18,3 +18,7 @@ class Settings(BaseSettings):
     default_model: str = "deepseek-v4-flash"  # R0 baseline model (spec 11.4)
     decision_timeout_ms: int = 800
     clef_max_in_flight: int = 2
+    # Model completions routinely take longer than httpx's 5 s default, which
+    # surfaces as a transport error and a 502. Long by design: the decision has
+    # its own budget (decision_timeout_ms); this one is for generating tokens.
+    upstream_timeout_s: float = 120.0
