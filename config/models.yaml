@@ -1,49 +1,16 @@
-# Capability tiers and flags for known NaN chat models.
-# Source: community API guide (September 2026). The catalog is rebuilt at
-# startup from GET /v1/models; this file only contributes metadata (spec 4).
-# Unknown model ids fall back to "generalist" defaults.
+# Capability metadata for NaN chat models.
+#
+# The model LIST is discovered at runtime from GET /v1/models (spec 4); this
+# file only adds what the API does not report: input modalities, how reasoning
+# is toggled, premium quota and policy tiers. Unknown ids fall back to
+# "generalist" defaults.
+#
+# Catalog verified against the live API on 2026-11-14. It differs from the
+# design notes: qwen3.8-max, kimi-k3.1-pro, hy4, deepseek-v4-pro and
+# mimo-v2.6-flash are new, and mimo-v2.5 no longer exists.
+
 models:
-  qwen3.6:
-    context: 256K
-    input: [text, image]
-    tools: true
-    reasoning:
-      mode: togglable
-      off: { chat_template_kwargs: { enable_thinking: false } }
-      on: { chat_template_kwargs: { enable_thinking: true } }
-  deepseek-v4-flash:
-    context: 1M
-    input: [text]  # image per card: [VERIFICAR]
-    tools: true
-    reasoning:
-      mode: effort
-      levels: [low, medium, high]
-    notes: json_schema unsupported, use json_object with schema in prompt [VERIFICAR]
-  mimo-v2.5:
-    context: 1M
-    input: [text, image, audio]
-    tools: true
-    reasoning:
-      mode: always_on
-  glm5.3:
-    context: 1M
-    input: [text]
-    tools: true
-    reasoning:
-      mode: always_on  # no documented switch
-    premium: true
-  qwen3.8-flash:
-    context: 262K
-    input: [text, image]
-    tools: xml
-    reasoning:
-      mode: always_on  # no documented switch
-  glm5.3-flash:
-    context: 1M
-    input: [text, image]
-    tools: true
-    reasoning:
-      mode: always_on
+  # --- tiers: fast ---
   gemma4:
     context: 256K
     input: [text, image]
@@ -52,12 +19,116 @@ models:
       mode: togglable_default_off
       off: {}
       on: { chat_template_kwargs: { enable_thinking: true } }
+
+  qwen3.8-flash:
+    context: 1M            # API: max_input_tokens 1000000
+    input: [text, image]
+    tools: xml
+    reasoning:
+      mode: always_on
+
+  glm5.3-flash:
+    context: 1M            # API: max_input_tokens 1048576
+    input: [text, image]
+    tools: true
+    reasoning:
+      mode: always_on
+
+  # --- tiers: generalist ---
+  qwen3.6:
+    context: 256K
+    input: [text, image]
+    tools: true
+    reasoning:
+      mode: togglable
+      off: { chat_template_kwargs: { enable_thinking: false } }
+      on: { chat_template_kwargs: { enable_thinking: true } }
+
+  deepseek-v4-flash:
+    context: 1M
+    input: [text]          # image support unverified [VERIFICAR]
+    tools: true
+    reasoning:
+      mode: effort
+      levels: [low, medium, high]
+    notes: json_schema unsupported, use json_object with the schema in the prompt [VERIFICAR]
+
+  # --- tiers: max capability ---
+  glm5.3:
+    context: 1M            # API: max_input_tokens 1048576
+    input: [text]
+    tools: true
+    reasoning:
+      mode: always_on      # no documented switch
+    premium: true
+
+  mimo-v2.6-flash:
+    context: 1M            # API: max_input_tokens 1000000
+    input: [text, image, audio]
+    tools: true
+    reasoning:
+      mode: always_on
+    notes: replaces mimo-v2.5 from the design notes; only audio-capable chat model
+
+  # --- discovered on the live catalog, not classified yet ---
+  qwen3.8-max:
+    context: 1M            # API: max_input_tokens 1000000, max_output 131072
+    input: [text]
+    tools: true
+    reasoning:
+      mode: unknown
+    tier: unclassified
+
+  kimi-k3.1-pro:
+    context: 1M            # API: max_input_tokens 1048576
+    input: [text]
+    tools: true
+    reasoning:
+      mode: unknown
+    tier: unclassified
+
+  deepseek-v4-pro:
+    context: 1M            # API: max_input_tokens 1048576, max_output 393216
+    input: [text]
+    tools: true
+    reasoning:
+      mode: effort
+      levels: [low, medium, high]
+    tier: unclassified
+
+  hy4:
+    context: 1M            # API: max_input_tokens 1000000
+    input: [text]
+    tools: true
+    reasoning:
+      mode: unknown
+    tier: unclassified
+
   minimax-h3:
     premium: true
-    excluded_from_policy: true  # no data yet (spec 4)
+    excluded_from_policy: true   # no data yet (spec 4)
+    tier: unclassified
 
-# Initial tiers [HIPOTESIS]: replaced by measured quality matrix (spec 11).
+# The API reports mode "chat" for these two, but they are image generators.
+# The registry must exclude them with this card, not trust `mode`.
+non_chat:
+  flux-2-klein:
+    kind: image_generation
+    advertised_mode: chat
+  qwen-image-2.1:
+    kind: image_generation
+    advertised_mode: chat
+  qwen3-embedding:
+    kind: embedding
+  rerank:
+    kind: rerank
+  kokoro:
+    kind: audio_speech
+  whisper:
+    kind: audio_transcription
+
+# Initial tiers [HIPOTESIS]: replaced by the measured quality matrix (spec 11).
 tiers:
   t1_fast: [gemma4, qwen3.8-flash, glm5.3-flash]
   t2_generalist: [qwen3.6, deepseek-v4-flash]
-  t3_max: [glm5.3, mimo-v2.5]
+  t3_max: [glm5.3, mimo-v2.6-flash]
