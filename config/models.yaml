@@ -16,8 +16,12 @@ models:
     input: [text, image]
     tools: xml
     reasoning:
+      # MEASURED 2026-11-14: with no parameters gemma4 emits reasoning tokens
+      # (72 of 80 at max_tokens=80, 1763 ms). The design notes claim it is off
+      # by default and that is wrong: an explicit false is what turns it off
+      # (877 ms, 0 reasoning tokens).
       mode: togglable_default_off
-      off: {}
+      off: { chat_template_kwargs: { enable_thinking: false } }
       on: { chat_template_kwargs: { enable_thinking: true } }
 
   qwen3.8-flash:
@@ -25,13 +29,19 @@ models:
     input: [text, image]
     tools: xml
     reasoning:
-      mode: always_on
+      # MEASURED 2026-11-14: the design notes call it always-on, but an
+      # explicit false stops it (34 -> 0 reasoning tokens, 980 -> 908 ms).
+      mode: togglable
+      off: { chat_template_kwargs: { enable_thinking: false } }
+      on: { chat_template_kwargs: { enable_thinking: true } }
 
   glm5.3-flash:
     context: 1M            # API: max_input_tokens 1048576
     input: [text, image]
     tools: true
     reasoning:
+      # MEASURED 2026-11-14: always-on confirmed, an explicit false does not
+      # lower its reasoning tokens (66 -> 58, within noise).
       mode: always_on
 
   # --- tiers: generalist ---
@@ -49,8 +59,12 @@ models:
     input: [text]          # image support unverified [VERIFICAR]
     tools: true
     reasoning:
+      # MEASURED 2026-11-14: effort does not reduce reasoning on a trivial
+      # prompt (38 tokens with no parameters, 41 with effort=low), and there
+      # is no documented way to switch it off. Treat `off` as unavailable.
       mode: effort
       levels: [low, medium, high]
+      cannot_disable: true
     notes: json_schema unsupported, use json_object with the schema in the prompt [VERIFICAR]
 
   # --- tiers: max capability ---

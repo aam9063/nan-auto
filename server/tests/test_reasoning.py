@@ -8,6 +8,7 @@ documented switch. Every test builds its `ModelInfo` by hand in the shape
 bare `on`/`off` trap never reaches this module.
 """
 
+from collections.abc import Mapping
 from typing import cast
 
 import pytest
@@ -43,7 +44,9 @@ DEEPSEEK = dict(mode="effort")
 GEMMA4 = dict(mode="togglable_default_off", on={"chat_template_kwargs": {"enable_thinking": True}})
 
 # always_on models from the card, each with its own test (NAU-09-T4).
-ALWAYS_ON_IDS = ("mimo-v2.6-flash", "glm5.3-flash", "glm5.3", "qwen3.8-flash")
+# qwen3.8-flash is NOT here: it was measured to respond to an explicit false
+# (34 -> 0 reasoning tokens), so its card entry is `togglable` now.
+ALWAYS_ON_IDS = ("mimo-v2.6-flash", "glm5.3-flash", "glm5.3")
 
 
 class TestTogglable:
@@ -136,3 +139,54 @@ class TestPurity:
         assert card_on["chat_template_kwargs"]["enable_thinking"] is True  # type: ignore[index]
         assert "top_level" not in card_on
         assert reasoning_params(info, "high") == {"chat_template_kwargs": {"enable_thinking": True}}
+
+
+class TestMeasuredCard:
+    """The card must match what the models were measured to do (2026-11-14).
+
+    Three entries were wrong in the design notes. These tests fail if a future
+    edit reintroduces the old assumptions, so the measurement stays pinned.
+    """
+
+    @pytest.fixture()
+    def card_models(self) -> Mapping[str, ModelInfo]:
+        from nan_auto.registry.catalog import load_card, merge
+        from nan_auto.registry.types import CatalogEntry
+
+        catalog = tuple(
+            CatalogEntry(id=model_id, mode="chat")
+            for model_id in (
+                "gemma4",
+                "qwen3.6",
+                "qwen3.8-flash",
+                "glm5.3-flash",
+                "deepseek-v4-flash",
+            )
+        )
+        return merge(catalog, load_card())
+
+    def test_gemma4_sends_an_explicit_false_to_stop_reasoning(self, card_models) -> None:
+        # With no parameters it reasons anyway (72 of 80 tokens, 1763 ms).
+        params = reasoning_params(card_models["gemma4"], "off")
+
+        assert params == {"chat_template_kwargs": {"enable_thinking": False}}
+
+    def test_qwen38_flash_can_be_switched_off(self, card_models) -> None:
+        # The design notes called it always-on; an explicit false stops it.
+        assert card_models["qwen3.8-flash"].reasoning_mode == "togglable"
+
+        params = reasoning_params(card_models["qwen3.8-flash"], "off")
+
+        assert params == {"chat_template_kwargs": {"enable_thinking": False}}
+
+    def test_glm53_flash_stays_locked(self, card_models) -> None:
+        assert card_models["glm5.3-flash"].reasoning_mode == "always_on"
+
+        assert reasoning_params(card_models["glm5.3-flash"], "off") == {}
+
+    def test_deepseek_effort_never_claims_to_disable_reasoning(self, card_models) -> None:
+        # effort=low did not lower reasoning tokens: there is no off switch.
+        assert reasoning_params(card_models["deepseek-v4-flash"], "off") == {}
+        assert reasoning_params(card_models["deepseek-v4-flash"], "low") == {
+            "reasoning_effort": "low"
+        }
