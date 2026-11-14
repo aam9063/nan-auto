@@ -116,7 +116,9 @@ async def test_alias_request_is_routed_and_annotated() -> None:
     assert request.headers["authorization"] == CLIENT_KEY
 
     assert response.headers["x-nan-auto-model"] == expected
-    assert response.headers["x-nan-auto-decision-id"] == "decision-canned"
+    # No store, so there is no detail to consult: the header is empty by
+    # design (spec 8 says it is the id to look the detail up).
+    assert response.headers["x-nan-auto-decision-id"] == ""
     assert response.headers["x-nan-auto-reason"]
     assert "x-nan-auto-fallback" not in response.headers  # only when a fallback happened
 

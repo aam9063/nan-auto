@@ -8,6 +8,7 @@ call: features, Clef, the capability filter and the policy only. None of the
 new routes ever returns prompt text or an API key (spec 12).
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -335,3 +336,104 @@ async def test_the_playground_sees_the_same_inventory_as_the_routed_path(
     assert payload["model"] in {"gemma4", "deepseek-v4-flash"}
     assert payload["candidates"]  # the ranking came from a populated inventory
     assert registry.models  # and the refresh actually happened
+
+
+async def test_the_decision_id_header_resolves_through_the_detail_route(tmp_path: Path) -> None:
+    """Spec 8 calls this header "id para consultar el detalle"; it must resolve.
+
+    It used to carry the Clef decision id, which is not a log key, so every
+    documented lookup ended in a 404.
+    """
+    store = DecisionLogStore(tmp_path / "log.sqlite")
+    await store.open()
+    upstream = RecordingUpstream()
+    app = create_app(
+        registry=Registry(load_card()),
+        provider=StaticProvider(),
+        settings=Settings(default_model=DEFAULT_MODEL),
+        client=httpx.AsyncClient(transport=upstream),
+        store=store,
+    )
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        routed = await client.post(
+            "/v1/chat/completions",
+            json={"model": "nan-auto", "messages": [{"role": "user", "content": "hola"}]},
+            headers={"Authorization": CANARY_KEY},
+        )
+        decision_id = routed.headers["x-nan-auto-decision-id"]
+        assert decision_id and decision_id != "decision-canned"
+
+        detail = await client.get(f"/v1/decisions/{decision_id}")
+
+    assert detail.status_code == 200
+    assert detail.json()["id"] == decision_id
+    assert len(detail.json()["answers"]) == 4
+
+
+async def test_a_failed_log_write_publishes_no_event(tmp_path: Path) -> None:
+    """A subscriber must never see a decision the log does not hold."""
+
+    class ExplodingStore(DecisionLogStore):
+        async def record_decision(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+            raise RuntimeError("disk full")
+
+    store = ExplodingStore(tmp_path / "boom.sqlite")
+    await store.open()
+    upstream = RecordingUpstream()
+    app = create_app(
+        registry=Registry(load_card()),
+        provider=StaticProvider(),
+        settings=Settings(default_model=DEFAULT_MODEL),
+        client=httpx.AsyncClient(transport=upstream),
+        store=store,
+    )
+    bus = app.state.decision_bus
+    subscription = bus.subscribe()
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            routed = await client.post(
+                "/v1/chat/completions",
+                json={"model": "nan-auto", "messages": [{"role": "user", "content": "hola"}]},
+                headers={"Authorization": CANARY_KEY},
+            )
+        assert routed.status_code == 200  # a log failure never breaks the reply
+        assert subscription.queue.empty()  # and it publishes nothing
+    finally:
+        bus.unsubscribe(subscription)
+
+
+async def test_the_stream_event_carries_the_same_timestamp_as_the_row(tmp_path: Path) -> None:
+    """The event leaves `created_at` null if it is built before the store stamps it."""
+    store = DecisionLogStore(tmp_path / "ts.sqlite")
+    await store.open()
+    upstream = RecordingUpstream()
+    app = create_app(
+        registry=Registry(load_card()),
+        provider=StaticProvider(),
+        settings=Settings(default_model=DEFAULT_MODEL),
+        client=httpx.AsyncClient(transport=upstream),
+        store=store,
+    )
+    bus = app.state.decision_bus
+    subscription = bus.subscribe()
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            await client.post(
+                "/v1/chat/completions",
+                json={"model": "nan-auto", "messages": [{"role": "user", "content": "hola"}]},
+                headers={"Authorization": CANARY_KEY},
+            )
+            frame = subscription.queue.get_nowait()
+            # The bus publishes complete SSE frames: strip the envelope first.
+            payload = json.loads(frame.split(b"data: ", 1)[1].strip())
+            stored = (await store.list_decisions())[0]
+    finally:
+        bus.unsubscribe(subscription)
+
+    assert payload["created_at"] is not None
+    assert payload["created_at"] == stored.decision.created_at

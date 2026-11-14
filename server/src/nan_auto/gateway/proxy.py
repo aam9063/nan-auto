@@ -40,6 +40,8 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import replace
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Literal, cast
 
@@ -153,7 +155,6 @@ def proxy_router(
             model = settings.default_model
             level = "off"
             reason = f"clef_unavailable fallback={model}"
-            decision_id = ""
             # Fail open (spec 5.3): only the default model can answer.
             chain: tuple[str, ...] = (settings.default_model,)
         else:
@@ -168,7 +169,6 @@ def proxy_router(
             model = result.model
             level = result.reasoning
             reason = result.reason
-            decision_id = decision.decision_id
             if model is None:
                 return _error_response(
                     502, "no model available", err_type="api_error", code="no_model"
@@ -230,9 +230,13 @@ def proxy_router(
                 one, in policy order and only when there was one, as spec 8
                 words it ("si hubo").
                 """
+                # The documented purpose of this header is to look the
+                # detail up (spec 8). The Clef decision id cannot: it is not a
+                # log key, so the row id goes here and empty means there is
+                # nothing to consult because nothing was recorded.
                 headers = {
                     "x-nan-auto-model": tried[-1],
-                    "x-nan-auto-decision-id": decision_id,
+                    "x-nan-auto-decision-id": trace.request_id if trace is not None else "",
                     "x-nan-auto-reason": reason,
                 }
                 if len(tried) > 1:
@@ -589,6 +593,10 @@ async def _write_decision(
     publishes nothing. The publish itself never blocks — the bus drops a slow
     subscriber instead (NAU-16a).
     """
+    if record.created_at is None:
+        # Stamp it here so the stored row and the published event carry the
+        # same instant; the store only defaults it when it is left empty.
+        record = replace(record, created_at=datetime.now(UTC))
     try:
         await store.record_decision(record, answers=answers, attempts=attempts)
     except Exception:
@@ -655,6 +663,11 @@ class _DecisionTrace:
         self._started = started
         self._attempts: list[tuple[str, int | None, int]] = []
         self._ttft_ms: int | None = None
+
+    @property
+    def request_id(self) -> str:
+        """The log row id, the one `GET /v1/decisions/{id}` resolves."""
+        return self._request_id
 
     def attempt(self, *, model: str, status: int | None, latency_ms: int) -> None:
         """Record one upstream attempt; `status` None means no answer arrived."""
