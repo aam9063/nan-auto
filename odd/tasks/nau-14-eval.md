@@ -89,7 +89,7 @@ evaluación del dashboard está vacía — hoy lo dice honestamente, pero no sie
 
 | Tarea | Nivel | Resultado |
 |---|---|---|
-| T1-T4, T1-T2 | medio (T3 alto) | verificador recomendado para T3 (pendiente: decisión del humano) |
+| T1-T4, T1-T2 | medio (T3 alto) | verificador independiente ejecutado 2026-11-14 (`gentle-ai-verify`, tarea `mwgssmlb-1-27re`): concurrencia **met**, backoff **unmet→met** (bloqueante: el reintento de temperatura tragaba el 429; fix `3da5a0d` con dos pruebas nuevas), reanudabilidad **met**, pruebas **met**. Advisories: `--models "m,m"` duplicaría pares (plan usa set, run usa lista); solo un fallo de DB aborta la corrida en vuelo. |
 
 ## Progreso
 
@@ -109,6 +109,14 @@ política v1 con la matriz real (los baselines muestran que siempre deepseek-v4-
 R1/R2 en latencia sin sacrificar calidad); (3) verificador independiente para T3 (riesgo alto).
 
 ## Log
+
+- **L7** (2026-11-14): verificador independiente de T3 — bloqueante encontrado y corregido (commit
+  `3da5a0d`): un 429 en el primer intento pasaba por la rama del reintento de temperatura (condición
+  `>=400`), disparando un POST inmediato sin backoff y tragándose `RateLimited`. Condición ahora
+  `== 400`; pruebas: `test_a_first_attempt_429_raises_rate_limited_before_any_temperature_retry`,
+  `test_a_sustained_429_storm_terminates_every_pair_without_leaking_a_slot`.
+- **L8** (2026-11-14): commit de la entrega completa (`4852ee1` feat + `be3111c` docs + `3da5a0d`
+  fix) en `feature/nau-14-eval` tras autorización explícita del humano («dale»).
 
 - **L1** (delegación, 2026-11-14 16:04): «Implement the offline evaluation harness in
   C:/Users/alber/orca/nan-auto. Verify `git branch --show-current` returns feature/nau-14-eval and
