@@ -216,7 +216,7 @@ async def test_streaming_response_sets_decision_headers() -> None:
     assert call.errors == []
     assert body == FIRST_CHUNK + LAST_CHUNK
     assert call.headers["x-nan-auto-model"]
-    assert call.headers["x-nan-auto-decision-id"] == "decision-canned"
+    assert call.headers["x-nan-auto-decision-id"] == ""  # no store, nothing to consult
     assert call.headers["x-nan-auto-reason"]
     assert "x-nan-auto-fallback" not in call.headers  # only when a fallback happened
 

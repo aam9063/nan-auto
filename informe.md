@@ -3,7 +3,8 @@
 > Documento vivo. Registra qué se construye, cómo, **qué se rompió en el camino y cómo se
 > detectó y resolvió**. Se actualiza al final de cada unidad de trabajo.
 >
-> Última actualización: 2026-11-14 · rama `dev` en `0bb5bbc` · **286 tests** en verde.
+> Última actualización: 2026-11-14 · rama `dev` en `8ab02ad` · **286 tests** en verde;
+> API de lectura y SSE en `feature/nau-16-read-api` con **301 tests**, en verificación.
 
 ---
 
@@ -64,7 +65,8 @@ el gateway apaga el razonamiento de verdad en tareas triviales. No siempre fue a
 | NAU-10 | Fallback, circuit breaker y limitador | hecho + verificado | `0bb5bbc` |
 | NAU-13 | Log de decisiones sin contenido, cableado en el proxy | hecho | `14d0ac7` |
 | NAU-14/15 | Benchmark y evaluación offline | pendiente | — |
-| NAU-16/17 | Dashboard | pendiente | — |
+| API de lectura | `/v1/decisions`, `/v1/playground/decide`, `/v1/stream` | implementado, en verificación | `feature/nau-16-read-api` |
+| NAU-16/17 | Dashboard React | pendiente | — |
 | NAU-12/11 | Estabilidad conversacional y presupuesto de decisión | pendiente | — |
 
 **Números reales**, no estimados: 286 tests, `ruff` limpio, `pyright` 0 errores.
@@ -551,7 +553,27 @@ Un modelo puede recibir un 402 de más por hora; retirarlo para siempre es peor.
 **Lección:** una regla sin señal que la active es una regla que en la práctica no caduca nunca.
 Al escribir "hasta que X ocurra", hay que preguntarse **quién detecta X**.
 
-### 5.20 Errores menores, todos reales
+### 5.20 El playground decidía contra un catálogo vacío
+
+**Síntoma:** el playground respondía `200` en **0 ms** con `fallback=deepseek-v4-flash` y
+`rejected: []`. Es decir: decidía sin inventario, no descartaba a nadie y se rendía al modelo por
+defecto.
+
+**Causa:** el inventario se refresca de forma perezosa y solo el camino del proxy llamaba a
+`refresh_if_stale()`. La pantalla que existe **para explicar la decisión** era la única que
+decidía sin datos.
+
+**Detección:** el spot-check con servidor real. Los 300 tests pasaban: el doble de pruebas usaba
+un registro ya poblado, así que el caso "registro frío" nunca ocurría en la suite.
+
+**Resolución:** el playground refresca antes de decidir, y un test de regresión falla sin esa
+línea (comprobado por mutación: `assert 'fallback=' not in 'chat_casual…eek-v4-flash'`).
+
+**Lección:** tercera vez que el mismo patrón muerde (§5.17, §5.19). Un estado que se carga de
+forma perezosa tiene que cargarse **en todos** los caminos que lo leen; si no, el camino olvidado
+no falla, **decide mal y en silencio**.
+
+### 5.21 Errores menores, todos reales
 
 | Error | Detección | Resolución |
 |---|---|---|

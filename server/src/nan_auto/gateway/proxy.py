@@ -40,6 +40,8 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import replace
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any, Literal, cast
 
@@ -52,6 +54,7 @@ from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.errors import ClefError
 from nan_auto.clef_client.questions import build_questions, build_state
 from nan_auto.clef_client.types import Decision
+from nan_auto.gateway.events import DecisionBus, decision_payload
 from nan_auto.gateway.fallback import CircuitBreaker, ConcurrencyLimiter
 from nan_auto.gateway.log_store import (
     Attempt,
@@ -82,11 +85,13 @@ def proxy_router(
     settings: Settings,
     client: httpx.AsyncClient,
     store: DecisionLogStore | None = None,
+    bus: DecisionBus | None = None,
 ) -> APIRouter:
     """Build the chat-completions route over one registry, Clef and upstream client.
 
     With a `store`, every routed request additionally leaves one decision-log
-    row (NAU-13 T6); without it, decision logging stays off.
+    row (NAU-13 T6); without it, decision logging stays off. With a `bus`, each
+    recorded decision is also published to the dashboard's SSE feed (NAU-16a).
     """
     router = APIRouter()
     upstream_url = f"{settings.nan_base_url}{_CHAT_COMPLETIONS_PATH}"
@@ -150,7 +155,6 @@ def proxy_router(
             model = settings.default_model
             level = "off"
             reason = f"clef_unavailable fallback={model}"
-            decision_id = ""
             # Fail open (spec 5.3): only the default model can answer.
             chain: tuple[str, ...] = (settings.default_model,)
         else:
@@ -165,7 +169,6 @@ def proxy_router(
             model = result.model
             level = result.reasoning
             reason = result.reason
-            decision_id = decision.decision_id
             if model is None:
                 return _error_response(
                     502, "no model available", err_type="api_error", code="no_model"
@@ -176,6 +179,7 @@ def proxy_router(
         trace: _DecisionTrace | None = (
             _DecisionTrace(
                 store,
+                bus=bus,
                 request_id=uuid.uuid4().hex,
                 conversation_hash=_conversation_hash(features.conversation_key),
                 profile=options.profile or body["model"],
@@ -226,9 +230,13 @@ def proxy_router(
                 one, in policy order and only when there was one, as spec 8
                 words it ("si hubo").
                 """
+                # The documented purpose of this header is to look the
+                # detail up (spec 8). The Clef decision id cannot: it is not a
+                # log key, so the row id goes here and empty means there is
+                # nothing to consult because nothing was recorded.
                 headers = {
                     "x-nan-auto-model": tried[-1],
-                    "x-nan-auto-decision-id": decision_id,
+                    "x-nan-auto-decision-id": trace.request_id if trace is not None else "",
                     "x-nan-auto-reason": reason,
                 }
                 if len(tried) > 1:
@@ -576,13 +584,45 @@ async def _write_decision(
     *,
     answers: tuple[ClefAnswer, ...],
     attempts: tuple[Attempt, ...],
+    bus: DecisionBus | None = None,
 ) -> None:
-    """Write one decision, degrading to a contentless warning on failure."""
+    """Write one decision, degrading to a contentless warning on failure.
+
+    Only after the row is safely stored is it published to the SSE bus: a
+    subscriber never sees a decision the log does not hold, and a failed write
+    publishes nothing. The publish itself never blocks — the bus drops a slow
+    subscriber instead (NAU-16a).
+    """
+    if record.created_at is None:
+        # Stamp it here so the stored row and the published event carry the
+        # same instant; the store only defaults it when it is left empty.
+        record = replace(record, created_at=datetime.now(UTC))
     try:
         await store.record_decision(record, answers=answers, attempts=attempts)
     except Exception:
         # Never break a response for a log failure; the line carries no content.
         _logger.warning("decision log write failed for %s", record.request_id)
+        return
+    if bus is None:
+        return
+    bus.publish(
+        decision_payload(
+            request_id=record.request_id,
+            profile=record.profile,
+            chosen_model=record.chosen_model,
+            reasoning_level=record.reasoning_level,
+            decision_source=record.decision_source,
+            clef_timeout=record.clef_timeout,
+            clef_latency_ms=record.clef_latency_ms,
+            ttft_ms=record.ttft_ms,
+            total_ms=record.total_ms,
+            prompt_tokens=record.prompt_tokens,
+            completion_tokens=record.completion_tokens,
+            created_at=record.created_at.isoformat() if record.created_at else None,
+            answers=answers,
+            attempts=attempts,
+        )
+    )
 
 
 class _DecisionTrace:
@@ -597,6 +637,7 @@ class _DecisionTrace:
         self,
         store: DecisionLogStore,
         *,
+        bus: DecisionBus | None = None,
         request_id: str,
         conversation_hash: str,
         profile: str,
@@ -609,6 +650,7 @@ class _DecisionTrace:
         started: float,
     ) -> None:
         self._store = store
+        self._bus = bus
         self._request_id = request_id
         self._conversation_hash = conversation_hash
         self._profile = profile
@@ -621,6 +663,11 @@ class _DecisionTrace:
         self._started = started
         self._attempts: list[tuple[str, int | None, int]] = []
         self._ttft_ms: int | None = None
+
+    @property
+    def request_id(self) -> str:
+        """The log row id, the one `GET /v1/decisions/{id}` resolves."""
+        return self._request_id
 
     def attempt(self, *, model: str, status: int | None, latency_ms: int) -> None:
         """Record one upstream attempt; `status` None means no answer arrived."""
@@ -676,6 +723,7 @@ class _DecisionTrace:
             ),
             answers=self._answers,
             attempts=tuple(attempts),
+            bus=self._bus,
         )
 
 
