@@ -367,3 +367,72 @@ def test_locked_reasoning_loses_to_a_model_that_can_switch_it_off() -> None:
     )
     assert result.reasoning == "off"
     assert result.model == "gemma4"
+
+
+def test_tier2_prefers_the_model_that_can_honour_reasoning_off() -> None:
+    """deepseek-v4-flash cannot stop reasoning, so `off` must not pick it.
+
+    It was measured on 2026-11-14: with effort=low it still spent 41 reasoning
+    tokens on a trivial prompt, and there is no switch. Asking it for `off` and
+    getting reasoning anyway is the latency the policy believes it avoided.
+    """
+    decision = _trivial_decision()
+    quiet = ModelInfo(
+        id="qwen3.6", mode="chat", input=("text",), tier="t2_generalist", reasoning_mode="togglable"
+    )
+    locked = ModelInfo(
+        id="deepseek-v4-flash",
+        mode="chat",
+        input=("text",),
+        tier="t2_generalist",
+        reasoning_mode="effort",
+    )
+    result = decide(
+        decision,
+        RequestFeatures(has_image=False, has_audio=False, est_tokens=10, turns=1),
+        {"deepseek-v4-flash": locked, "qwen3.6": quiet},
+        profile="nan-auto",
+    )
+    assert result.reasoning == "off"
+    assert result.model == "qwen3.6"
+
+
+def test_an_explicit_on_request_still_allows_the_effort_model() -> None:
+    """The preference is about `off` only: reasoning-on work can use it."""
+    decision = Decision(
+        decision_id="d",
+        model="clef",
+        task=ChoiceAnswer(
+            label="math_or_logic",
+            probabilities={"math_or_logic": 0.95, "other": 0.05},
+            confidence=0.95,
+        ),
+        difficulty=ScoreAnswer(
+            score=3.0,
+            legend={"0": "Trivial", "1": "Easy", "2": "Medium", "3": "Hard", "4": "Expert"},
+            probabilities={"3": 0.9},
+            confidence=0.9,
+        ),
+        needs_reasoning=NoulAnswer(yes=0.95, confidence=0.95),
+        expected_output_length=ScoreAnswer(
+            score=1.0,
+            legend={"0": "Very short", "1": "Short", "2": "Medium", "3": "Long"},
+            probabilities={"1": 0.9},
+            confidence=0.9,
+        ),
+    )
+    effort = ModelInfo(
+        id="deepseek-v4-flash",
+        mode="chat",
+        input=("text",),
+        tier="t2_generalist",
+        reasoning_mode="effort",
+    )
+    result = decide(
+        decision,
+        RequestFeatures(has_image=False, has_audio=False, est_tokens=10, turns=1),
+        {"deepseek-v4-flash": effort},
+        profile="nan-auto",
+    )
+    assert result.reasoning in {"low", "medium", "high"}
+    assert result.model == "deepseek-v4-flash"

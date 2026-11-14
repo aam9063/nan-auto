@@ -24,6 +24,7 @@ from nan_auto.router_core.capabilities import (
     resolve_profile,
 )
 from nan_auto.router_core.features import RequestFeatures
+from nan_auto.router_core.reasoning import honours_off
 
 # Initial tier ladder [HIPÓTESIS], from the card; "one tier up" follows it.
 _TIER_ORDER = ("t1_fast", "t2_generalist", "t3_max")
@@ -41,9 +42,10 @@ _TIER_FIT = {1: 1.0, 2: 0.75, 3: 0.5}
 _ID_FIT = {1: 1.0, 2: 0.85, 3: 0.7}
 # Observed quota or failure pressure; the registry reports it via health.
 _QUOTA_PENALTY = 0.25
-# Asking a model to stop reasoning when its card says always_on buys nothing:
-# the request pays the reasoning latency anyway. Two models in the same tier
-# with the same fit differ only in whether the switch exists [HIPÓTESIS].
+# Asking a model to stop reasoning when it cannot honour the request buys
+# nothing: the request pays the reasoning latency anyway. Measured on the live
+# models: always_on ignores the switch and effort models keep reasoning at every
+# level, so only togglable models count as honest (see honours_off).
 _LOCKED_REASONING_PENALTY = 0.3
 # Beyond this the summarize row prefers the 1M-context models [HIPÓTESIS].
 LONG_CONTEXT_TOKENS = 100_000
@@ -252,7 +254,7 @@ def _score(
     latency = _LATENCY_BY_TIER.get(info.tier, _DEFAULT_LATENCY)
     state = health.get(info.id) if health is not None else None
     quota = _QUOTA_PENALTY if state is not None and state.failures > 0 else 0.0
-    locked = _LOCKED_REASONING_PENALTY if want_off and info.reasoning_mode == "always_on" else 0.0
+    locked = _LOCKED_REASONING_PENALTY if want_off and not honours_off(info) else 0.0
     return fit * profile.q_weight - latency * profile.l_weight - quota - locked
 
 
