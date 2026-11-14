@@ -13,8 +13,6 @@ from nan_auto.registry.catalog import CatalogClient, CatalogEntry, load_card, pa
 from nan_auto.registry.errors import CatalogUnavailable
 from nan_auto.registry.state import Registry
 
-NOW = datetime(2026, 11, 14, 12, 0, 0, tzinfo=UTC)
-
 
 async def stub_fetch() -> tuple[CatalogEntry, ...]:
     return parse_catalog(live_catalog())
@@ -48,7 +46,10 @@ def test_registry_endpoint_reports_card_metadata() -> None:
 def test_registry_endpoint_reports_per_model_state() -> None:
     app, registry = make_app()
     registry.health("qwen3.6").mark_failure()
-    registry.health("glm5.3").mark_quota_exhausted(NOW + timedelta(minutes=30))
+    # Relative to the real clock: the endpoint renders `available` against
+    # datetime.now(). A window pinned to a fixed date expires and the test then
+    # fails forever, which is exactly what happened on 2026-11-14 after 12:30.
+    registry.health("glm5.3").mark_quota_exhausted(datetime.now(UTC) + timedelta(minutes=30))
     data = {item["id"]: item for item in TestClient(app).get("/v1/registry").json()["data"]}
     assert data["qwen3.6"]["state"]["failures"] == 1
     assert data["glm5.3"]["state"]["available"] is False

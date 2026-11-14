@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.mock import MockDecisionProvider
 from nan_auto.clef_client.nan import NanDecisionProvider
+from nan_auto.gateway.log_store import DecisionLogStore
 from nan_auto.gateway.proxy import proxy_router
 from nan_auto.registry.catalog import CatalogClient, load_card
 from nan_auto.registry.router import registry_router
@@ -24,9 +25,19 @@ def default_registry(settings: Settings | None = None) -> Registry:
     card = load_card()
     settings = settings or Settings()
     if settings.nan_key:
-        client = CatalogClient(client=httpx.AsyncClient(), api_key=settings.nan_key)
+        client = CatalogClient(client=default_client(settings), api_key=settings.nan_key)
         return Registry(card, fetcher=client.fetch)
     return Registry(card)
+
+
+def default_client(settings: Settings) -> httpx.AsyncClient:
+    """The shared upstream client, with a timeout that fits token generation.
+
+    Without this, httpx's 5 s default turns any slow-but-healthy completion into
+    a transport error and a 502. The connect timeout stays short so an
+    unreachable host fails fast.
+    """
+    return httpx.AsyncClient(timeout=httpx.Timeout(settings.upstream_timeout_s, connect=10.0))
 
 
 def default_provider(settings: Settings, client: httpx.AsyncClient) -> DecisionProvider:
@@ -48,11 +59,16 @@ def create_app(
     provider: DecisionProvider | None = None,
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
+    store: DecisionLogStore | None = None,
 ) -> FastAPI:
-    """Build the gateway application."""
+    """Build the gateway application.
+
+    `store`, when given, receives one decision-log row per routed request
+    (NAU-13 T6); without it, decision logging stays off.
+    """
     settings = settings or Settings()
     registry = registry or default_registry(settings)
-    client = client or httpx.AsyncClient()
+    client = client or default_client(settings)
     provider = provider or default_provider(settings, client)
     app = FastAPI(title="NaN Auto", version="0.1.0")
     model_ids = list(ROUTER_ALIASES)
@@ -71,7 +87,7 @@ def create_app(
         return {"object": "list", "data": payload}
 
     app.include_router(registry_router(registry))
-    app.include_router(proxy_router(registry, provider, settings, client))
+    app.include_router(proxy_router(registry, provider, settings, client, store))
     return app
 
 
