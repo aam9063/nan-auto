@@ -64,7 +64,11 @@ export function EvaluationScreen() {
         />
         <KpiCard
           label="Reducción de latencia"
-          value={latencyReduction == null ? "sin dato" : `−${fmtDecimal(latencyReduction * 100, 1)}%`}
+          value={
+            latencyReduction == null
+              ? "sin dato"
+              : `${latencyReduction < 0 ? "−" : ""}${fmtDecimal(Math.abs(latencyReduction) * 100, 1)}%`
+          }
           sub="R3 frente a R1 (siempre el más capaz)"
         />
         <KpiCard
@@ -188,12 +192,6 @@ function QualityLatencyScatter({
   const x = (latency: number) => PAD.left + ((latency - xMin) / (xMax - xMin)) * plotW
   const y = (quality: number) => PAD.top + (1 - (quality - yMin) / (yMax - yMin)) * plotH
 
-  // The dashed guide joins the unique-model points, ordered by latency.
-  const modelLine = [...points.filter((point) => !point.router)]
-    .sort((a, b) => a.latencySec - b.latencySec)
-    .map((point) => `${x(point.latencySec)},${y(point.quality)}`)
-    .join(" ")
-
   const yTicks = 4
   const xTicks = 5
 
@@ -257,14 +255,6 @@ function QualityLatencyScatter({
             </g>
           )
         })}
-        {/* dashed guide through the unique models */}
-        <polyline
-          points={modelLine}
-          fill="none"
-          stroke="var(--color-faint)"
-          strokeWidth="1.5"
-          strokeDasharray="5 4"
-        />
         {/* hollow gray dots: one per unique model */}
         {points
           .filter((point) => !point.router)

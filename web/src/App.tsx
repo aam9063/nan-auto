@@ -84,7 +84,7 @@ export default function App() {
                 type="button"
                 onClick={() => setTab(entry.id)}
                 aria-current={tab === entry.id ? "page" : undefined}
-                className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
+                className={`flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
                   tab === entry.id
                     ? "bg-accent-soft font-semibold text-accent"
                     : "text-body hover:bg-canvas hover:text-ink"
