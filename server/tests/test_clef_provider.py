@@ -166,6 +166,59 @@ async def test_api_key_never_appears_in_exception_messages() -> None:
 
 
 @respx.mock
+async def test_4xx_body_redacted_even_when_key_straddles_truncation() -> None:
+    # Redaction must happen before the 200-char cap: a key starting at column
+    # 187 would otherwise lose its head in the slice and survive redaction.
+    key = "sk-FAKE9KEY9BOUNDARY9TEST"
+    body = "x" * 187 + key
+    assert len(key) > 200 - 187  # the truncation would cut into the key
+    respx.post(URL).mock(return_value=httpx.Response(400, text=body))
+    client = httpx.AsyncClient()
+    prov = NanDecisionProvider(client=client, api_key=key, url=URL)
+    with pytest.raises(ClefUnavailable) as exc_info:
+        await prov.decide(state="{}", questions=build_questions())
+    text = str(exc_info.value)
+    assert key not in text
+    # No prefix of the key longer than 3 characters may survive either.
+    leaked = [n for n in range(4, len(key) + 1) if key[:n] in text]
+    assert not leaked, f"prefixes of the key leaked: {[key[:n] for n in leaked]}"
+
+
+@respx.mock
+async def test_decide_never_escapes_a_non_clef_error() -> None:
+    # Fail-open (NAU-11) relies on decide() raising only ClefError subclasses.
+    import json as _json
+
+    nan_body = {
+        **PAYLOAD,
+        "answers": {
+            **PAYLOAD["answers"],
+            "difficulty": {
+                **PAYLOAD["answers"]["difficulty"],
+                "score": float("nan"),
+            },
+        },
+    }
+    # Python's json.dumps emits bare NaN for non-finite floats; send it as raw
+    # text exactly as a lenient server could (httpx refuses to serialize it).
+    nan_text = _json.dumps(nan_body)
+    assert "NaN" in nan_text
+    canary_body = {"error": {"message": "authorization=sk-CANARY-9911", "type": "BadRequestError"}}
+    cases = {
+        "nan-body": httpx.Response(
+            200, text=nan_text, headers={"content-type": "application/json"}
+        ),
+        "canary-error-body": httpx.Response(200, json=canary_body),
+    }
+    for name, response in cases.items():
+        respx.post(URL).mock(return_value=response)
+        with pytest.raises(ClefError) as exc_info:
+            await provider().decide(state="{}", questions=build_questions())
+        assert isinstance(exc_info.value, ClefError), f"{name} escaped as non-ClefError"
+        assert "sk-CANARY-9911" not in str(exc_info.value), f"canary leaked in the {name} path"
+
+
+@respx.mock
 async def test_never_exceeds_max_in_flight() -> None:
     in_flight = 0
     peak = 0

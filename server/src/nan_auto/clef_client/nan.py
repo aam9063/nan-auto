@@ -84,7 +84,9 @@ class NanDecisionProvider:
                 if response.status_code >= 500:
                     raise ClefUnavailable(f"Clef returned {response.status_code}")
                 if response.status_code >= 400:
-                    detail = self._redact(response.text[:200])
+                    # Redact before truncating: a key straddling the cap would
+                    # lose its head in the slice and survive redaction.
+                    detail = self._redact(response.text)[:200]
                     raise ClefUnavailable(f"Clef returned {response.status_code}: {detail}")
                 try:
                     payload = response.json()

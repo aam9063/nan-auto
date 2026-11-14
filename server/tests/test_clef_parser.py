@@ -83,6 +83,48 @@ def test_error_payload_raises_format_error() -> None:
         parse_decision(payload)
 
 
+def test_error_payload_message_is_never_echoed() -> None:
+    # The server may embed request data in error.message; echoing it could leak
+    # the API key into logs. The exception carries the error type only.
+    canary = "sk-CANARY-9911"
+    payload = {
+        "error": {"message": f"invalid key authorization={canary}", "type": "BadRequestError"}
+    }
+    with pytest.raises(ClefFormatError) as exc_info:
+        parse_decision(payload)
+    assert canary not in str(exc_info.value)
+
+
+def test_non_finite_score_is_rejected() -> None:
+    # Python's json accepts bare NaN/Infinity: a non-finite score must not travel.
+    payload = load("systemone_v1_coding_debug.json")
+    payload["answers"]["difficulty"]["score"] = float("nan")
+    with pytest.raises(ClefFormatError, match="not a number"):
+        parse_decision(payload)
+
+
+def test_non_finite_noul_is_rejected() -> None:
+    payload = load("systemone_v1_coding_debug.json")
+    payload["answers"]["needs_reasoning"]["noul"] = float("inf")
+    with pytest.raises(ClefFormatError, match="not a number"):
+        parse_decision(payload)
+
+
+def test_boolean_input_tokens_defaults_to_zero() -> None:
+    # Soft metadata: it must not raise, and bool is not a usable token count.
+    payload = load("systemone_v1_coding_debug.json")
+    payload["usage"]["input_tokens"] = True
+    decision = parse_decision(payload)
+    assert decision.input_tokens == 0
+
+
+def test_non_finite_input_tokens_defaults_to_zero() -> None:
+    payload = load("systemone_v1_coding_debug.json")
+    payload["usage"]["input_tokens"] = float("nan")
+    decision = parse_decision(payload)
+    assert decision.input_tokens == 0
+
+
 def test_boolean_score_is_rejected() -> None:
     # bool is a subclass of int: without an explicit check, "score": true parses as 1.0.
     payload = load("systemone_v1_coding_debug.json")

@@ -5,6 +5,7 @@ captured real responses in `server/tests/fixtures/clef/`; see the verified
 contract in `odd/tasks/nau-02-decision-provider.md`.
 """
 
+import math
 from typing import Any
 
 from nan_auto.clef_client.errors import ClefFormatError
@@ -21,10 +22,11 @@ def parse_decision(payload: dict[str, Any]) -> Decision:
     if not isinstance(payload, dict):
         raise ClefFormatError("payload is not a JSON object")
     if "error" in payload:
+        # The message may embed request data (even the key); the type is all a
+        # log needs, so the message is dropped entirely, never echoed.
         error = payload["error"]
         kind = error.get("type", "unknown") if isinstance(error, dict) else "unknown"
-        message = error.get("message", "") if isinstance(error, dict) else str(error)
-        raise ClefFormatError(f"Clef error {kind}: {message}")
+        raise ClefFormatError(f"Clef error {kind}")
 
     answers = payload.get("answers")
     if not isinstance(answers, dict):
@@ -49,8 +51,11 @@ def _answer(answers: dict[str, Any], question_id: str) -> dict[str, Any]:
 
 
 def _number(value: Any, what: str) -> float:
-    """Accept only real numbers: bool is an int subclass, so reject it first."""
+    """Accept only finite real numbers: bool is an int subclass, reject it first."""
     if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ClefFormatError(f"{what} is not a number")
+    if not math.isfinite(value):
+        # Python's json accepts bare NaN/Infinity; they are not usable decisions.
         raise ClefFormatError(f"{what} is not a number")
     return float(value)
 
@@ -108,4 +113,6 @@ def _input_tokens(payload: dict[str, Any]) -> int:
     if not isinstance(usage, dict):
         return 0
     value = usage.get("input_tokens", 0)
-    return int(value) if isinstance(value, int | float) else 0
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        return 0
+    return int(value)
