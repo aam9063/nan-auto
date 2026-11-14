@@ -3,7 +3,7 @@
 > Documento vivo. Registra qué se construye, cómo, **qué se rompió en el camino y cómo se
 > detectó y resolvió**. Se actualiza al final de cada unidad de trabajo.
 >
-> Última actualización: 2026-11-14 · rama `dev` en `2fcd6ef` · **304 tests** en verde.
+> Última actualización: 2026-11-14 · rama `dev` en `99f3c0f` · **305 tests** en verde.
 
 ---
 
@@ -65,7 +65,7 @@ el gateway apaga el razonamiento de verdad en tareas triviales. No siempre fue a
 | NAU-13 | Log de decisiones sin contenido, cableado en el proxy | hecho | `14d0ac7` |
 | NAU-14/15 | Benchmark y evaluación offline | pendiente | — |
 | NAU-16a | `/v1/decisions`, `/v1/playground/decide`, `/v1/stream` | hecho + verificado | `2fcd6ef` |
-| NAU-16/17 | Dashboard React | pendiente | — |
+| NAU-16b/17 | Dashboard: playground, feed, registro, evaluación | hecho | `99f3c0f` |
 | NAU-12/11 | Estabilidad conversacional y presupuesto de decisión | pendiente | — |
 
 **Números reales**, no estimados: 286 tests, `ruff` limpio, `pyright` 0 errores.
@@ -590,7 +590,26 @@ actualizaron al contrato real.
 **Lección:** una cabecera con un propósito declarado y sin nadie que lo ejerza es deuda silenciosa.
 Si el documento dice "sirve para X", tiene que existir un test que haga X.
 
-### 5.22 Errores menores, todos reales
+### 5.22 La regla "ante la duda, subir" actuaba en silencio
+
+**Síntoma:** el playground eligió `mimo-v2.6-flash` (escalón máximo) para una pregunta factual
+simple, con el motivo `factual_qa d=3 reasoning=on`. Sin explicación aparente.
+
+**Causa:** no había bug. La distribución de dificultad que devolvió Clef estaba repartida entre los
+extremos, así que se aplicó la regla de la spec 6.4 —**ante la duda, subir un escalón**— y la
+política prefirió el escalón alto. La decisión era correcta; el **motivo no lo decía**.
+
+**Detección:** el spot-check con servidor real, comparando lo que la pantalla mostraba con lo que
+la política debía hacer. Ningún test podía verlo: el comportamiento era el correcto.
+
+**Resolución:** el motivo termina en `" bumped"` cuando la regla se dispara, y un test fija los dos
+casos (con y sin duda).
+
+**Lección:** una decisión correcta que no se puede explicar es indistinguible de un error, y esta
+pantalla existe exactamente para explicar. **Si una regla cambia el resultado, tiene que aparecer
+en el motivo.**
+
+### 5.23 Errores menores, todos reales
 
 | Error | Detección | Resolución |
 |---|---|---|
@@ -625,7 +644,7 @@ Todo lo que sigue está **observado**, no narrado:
 
 | Qué | Resultado |
 |---|---|
-| Suite del servidor | **304 passed** |
+| Suite del servidor | **305 passed** |
 | Lint y tipos | `ruff` limpio · `pyright` 0 errores, 0 warnings |
 | Contrato de Clef | 3 fixtures reales, parser con 9 tests |
 | Catálogo real | 18 → 12 servibles; 6 excluidos con motivo |
