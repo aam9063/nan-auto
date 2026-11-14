@@ -315,3 +315,55 @@ class TestScoringSelectionAndFailOpen:
         assert result.model is None
         assert result.fallback is True
         assert result.candidates == ()
+
+
+def _trivial_decision() -> Decision:
+    return Decision(
+        decision_id="d",
+        model="clef",
+        task=ChoiceAnswer(
+            label="chat_casual",
+            probabilities={"chat_casual": 0.9, "other": 0.1},
+            confidence=0.9,
+        ),
+        difficulty=ScoreAnswer(
+            score=1.0,
+            legend={"0": "Trivial", "1": "Easy", "2": "Medium", "3": "Hard", "4": "Expert"},
+            probabilities={"1": 0.8, "0": 0.1, "2": 0.1},
+            confidence=0.8,
+        ),
+        needs_reasoning=NoulAnswer(yes=0.1, confidence=0.9),
+        expected_output_length=ScoreAnswer(
+            score=0.0,
+            legend={"0": "Very short", "1": "Short", "2": "Medium", "3": "Long"},
+            probabilities={"0": 0.9},
+            confidence=0.9,
+        ),
+    )
+
+
+def test_locked_reasoning_loses_to_a_model_that_can_switch_it_off() -> None:
+    """When the policy wants reasoning off, an always-on model is not equal.
+
+    Two models in the same tier with the same fit differ only in whether the
+    switch exists: asking for `off` on a model that ignores it buys no latency,
+    which is the whole point of turning reasoning off.
+    """
+    locked = ModelInfo(
+        id="glm5.3-flash", mode="chat", input=("text",), tier="t1_fast", reasoning_mode="always_on"
+    )
+    switchable = ModelInfo(
+        id="gemma4",
+        mode="chat",
+        input=("text",),
+        tier="t1_fast",
+        reasoning_mode="togglable_default_off",
+    )
+    result = decide(
+        _trivial_decision(),
+        RequestFeatures(has_image=False, has_audio=False, est_tokens=10, turns=1),
+        {"glm5.3-flash": locked, "gemma4": switchable},
+        profile="nan-auto",
+    )
+    assert result.reasoning == "off"
+    assert result.model == "gemma4"
