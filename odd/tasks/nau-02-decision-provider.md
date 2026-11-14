@@ -115,7 +115,25 @@ Restaurado el código: 11 passed otra vez. Los tests muerden de verdad.
 
 | Tarea | Nivel | Resultado |
 |---|---|---|
-| T1-T5 | medio | pendiente de assess al cerrar el slice |
+| T1-T5 | medio | revisión nativa **no disponible** (`package-local-binary-missing`); assess escalado a alto por el ítem de seguridad |
+| T1-T5 | alto (escalado, ítem 2) | verificador independiente: 3 claims VERIFIED, 1 **REFUTED** y corregido |
+
+### Hallazgos del verificador y corrección
+
+El verificador refutó que el parser no se deje engañar: `bool` es subclase de `int`, así que
+`"score": true` se aceptaba como `1.0` y `"noul": true` también, en silencio. Además los
+cuerpos `200` mal formados escapaban como `JSONDecodeError` / `AttributeError` / `ValueError`,
+que **no** eran `ClefError` y por tanto rompían el fallo abierto (NAU-11).
+
+| Corrección | Evidencia observada |
+|---|---|
+| `_number()` rechaza `bool` y strings en `score`, `noul`, masas y `confidence` | 6 tests nuevos, 5 vistos RED (`DID NOT RAISE`) antes del arreglo |
+| payload no-dict y `probabilities` vacías → `ClefFormatError` | `AttributeError: 'list' object has no attribute 'get'` y `DID NOT RAISE` en RED |
+| `response.json()` inelegible → `ClefUnavailable` sin cuerpo | `json.decoder.JSONDecodeError` escapado, visto en RED |
+| errores unificados en `errors.py`, todos cuelgan de `ClefError` | el test de canario exigía capturar `ClefError` |
+| el eco del cuerpo 4xx se redacta | servidor que devuelve `authorization=sk-CANARY-9911`: con la redacción 14 passed; mutación que la quita → `canary leaked in the 403-echoing-headers path` |
+
+Suite: 35 → 44 passed. `ruff` y `pyright` limpios (0 errores, 0 warnings).
 
 ## Progreso
 

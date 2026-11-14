@@ -10,9 +10,11 @@ from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.mock import MockDecisionProvider
 from nan_auto.clef_client.nan import (
     ClefAuthError,
+    ClefError,
     ClefUnavailable,
     NanDecisionProvider,
 )
+from nan_auto.clef_client.parser import ClefFormatError
 from nan_auto.clef_client.questions import build_questions
 
 URL = "https://api.nan.builders/v1/systemone"
@@ -117,6 +119,50 @@ async def test_server_error_raises_unavailable() -> None:
     respx.post(URL).mock(return_value=httpx.Response(500, text="boom"))
     with pytest.raises(ClefUnavailable, match="500"):
         await provider().decide(state="{}", questions=build_questions())
+
+
+@respx.mock
+async def test_200_with_non_json_body_raises_unavailable() -> None:
+    respx.post(URL).mock(return_value=httpx.Response(200, text="<html>under maintenance</html>"))
+    with pytest.raises(ClefUnavailable, match="non-JSON"):
+        await provider().decide(state="{}", questions=build_questions())
+
+
+@respx.mock
+async def test_200_with_json_list_body_raises_format_error() -> None:
+    # A wrong-shaped body is a format failure, not a crash or an availability lie.
+    respx.post(URL).mock(return_value=httpx.Response(200, json=[1, 2, 3]))
+    with pytest.raises(ClefFormatError):
+        await provider().decide(state="{}", questions=build_questions())
+
+
+@respx.mock
+async def test_api_key_never_appears_in_exception_messages() -> None:
+    # The key travels only in the Authorization header: no error path may echo it.
+    canary = "sk-CANARY-9911"
+    client = httpx.AsyncClient()
+    prov = NanDecisionProvider(
+        client=client,
+        api_key=canary,
+        url=URL,
+        retry_backoff=0.0,
+        max_retries=2,
+        timeout=0.01,
+    )
+    cases = {
+        "timeout": httpx.ReadTimeout("slow"),
+        "401": httpx.Response(401, json={"error": {"message": "invalid key"}}),
+        "403": httpx.Response(403, text="forbidden for this principal"),
+        "403-echoing-headers": httpx.Response(403, text=f"denied for authorization={canary}"),
+        "429": httpx.Response(429, json={"error": {"message": "too many in flight"}}),
+        "500": httpx.Response(500, text="boom"),
+        "non-json": httpx.Response(200, text="<html>under maintenance</html>"),
+    }
+    for name, side_effect in cases.items():
+        respx.post(URL).mock(side_effect=side_effect)
+        with pytest.raises(ClefError) as exc_info:
+            await prov.decide(state="{}", questions=build_questions())
+        assert canary not in str(exc_info.value), f"canary leaked in the {name} path"
 
 
 @respx.mock

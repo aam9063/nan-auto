@@ -9,22 +9,18 @@ import asyncio
 
 import httpx
 
+from nan_auto.clef_client.errors import (
+    ClefAuthError,
+    ClefError,
+    ClefUnavailable,
+)
 from nan_auto.clef_client.parser import parse_decision
 from nan_auto.clef_client.types import Decision
 
 DEFAULT_URL = "https://api.nan.builders/v1/systemone"
 
-
-class ClefError(RuntimeError):
-    """Base class for Clef failures the router can fall open on."""
-
-
-class ClefUnavailable(ClefError):
-    """Clef did not answer usefully: timeout, 429 sustained or a 5xx."""
-
-
-class ClefAuthError(ClefError):
-    """The key was rejected; retrying cannot help."""
+# Re-exported so callers can fail open on one import site.
+__all__ = ["ClefAuthError", "ClefError", "ClefUnavailable", "NanDecisionProvider"]
 
 
 class NanDecisionProvider:
@@ -48,6 +44,17 @@ class NanDecisionProvider:
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
         self._slots = asyncio.Semaphore(max_in_flight)
+
+    def _redact(self, text: str) -> str:
+        """Strip the key from server-controlled text before it reaches a message.
+
+        A 4xx body is useful when debugging the questionnaire, but it is not
+        trusted: if the API ever echoed request headers back, this is the one
+        place the key could escape into a log.
+        """
+        if not self._api_key:
+            return text
+        return text.replace(self._api_key, "[redacted]")
 
     async def decide(self, *, state: str, questions: dict) -> Decision:
         """Ask Clef for one decision within the concurrency limit."""
@@ -77,10 +84,13 @@ class NanDecisionProvider:
                 if response.status_code >= 500:
                     raise ClefUnavailable(f"Clef returned {response.status_code}")
                 if response.status_code >= 400:
-                    raise ClefUnavailable(
-                        f"Clef returned {response.status_code}: {response.text[:200]}"
-                    )
-                return parse_decision(response.json())
+                    detail = self._redact(response.text[:200])
+                    raise ClefUnavailable(f"Clef returned {response.status_code}: {detail}")
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise ClefUnavailable("Clef returned a non-JSON body") from exc
+                return parse_decision(payload)
 
             raise ClefUnavailable(
                 f"Clef 429 sustained after {self._max_retries} attempts (last {last_status})"

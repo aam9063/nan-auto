@@ -81,3 +81,45 @@ def test_error_payload_raises_format_error() -> None:
     payload = {"error": {"message": "question 'needs_reasoning': bad", "type": "BadRequestError"}}
     with pytest.raises(ClefFormatError, match="BadRequestError"):
         parse_decision(payload)
+
+
+def test_boolean_score_is_rejected() -> None:
+    # bool is a subclass of int: without an explicit check, "score": true parses as 1.0.
+    payload = load("systemone_v1_coding_debug.json")
+    payload["answers"]["difficulty"]["score"] = True
+    with pytest.raises(ClefFormatError, match="not a number"):
+        parse_decision(payload)
+
+
+def test_boolean_noul_is_rejected() -> None:
+    payload = load("systemone_v1_coding_debug.json")
+    payload["answers"]["needs_reasoning"]["noul"] = False
+    with pytest.raises(ClefFormatError, match="not a number"):
+        parse_decision(payload)
+
+
+def test_numeric_string_score_is_rejected() -> None:
+    payload = load("systemone_v1_coding_debug.json")
+    payload["answers"]["difficulty"]["score"] = "2.8"
+    with pytest.raises(ClefFormatError, match="not a number"):
+        parse_decision(payload)
+
+
+def test_empty_probabilities_raise_format_error() -> None:
+    # A decision with no mass is not a decision.
+    payload = load("systemone_v1_coding_debug.json")
+    payload["answers"]["task"]["probabilities"] = {}
+    with pytest.raises(ClefFormatError, match="probabilities"):
+        parse_decision(payload)
+
+
+def test_list_payload_raises_format_error() -> None:
+    with pytest.raises(ClefFormatError):
+        parse_decision([1, 2, 3])  # type: ignore[arg-type]
+
+
+def test_non_numeric_probability_mass_is_rejected() -> None:
+    payload = load("systemone_v1_coding_debug.json")
+    payload["answers"]["task"]["probabilities"]["other"] = "high"
+    with pytest.raises(ClefFormatError, match="not a number"):
+        parse_decision(payload)
