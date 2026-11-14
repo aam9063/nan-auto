@@ -135,6 +135,25 @@ que **no** eran `ClefError` y por tanto rompían el fallo abierto (NAU-11).
 
 Suite: 35 → 44 passed. `ruff` y `pyright` limpios (0 errores, 0 warnings).
 
+### Segunda ronda del verificador
+
+Volvió a refutar dos puntos, ambos reales:
+
+| Hallazgo | Prueba | Corrección |
+|---|---|---|
+| **3b** el eco de `error.message` en el parser filtraba la clave entera si el servidor embebe datos de la petición | `Clef error BadRequestError: ... authorization=sk-CANARY-9911` | el mensaje se descarta: la excepción lleva solo el tipo |
+| **3d** truncar a 200 antes de redactar dejaba el prefijo vivo si la clave cae en el límite | test con la clave en la columna 187: `prefixes of the key leaked: ['sk-F', 'sk-FA', ...]` | redactar primero, truncar después |
+| **2** `NaN`/`Infinity` que `json` acepta escapaban como `ValueError`, no como `ClefError` | `DID NOT RAISE ClefError` | `_number` exige `math.isfinite` |
+| **1** `input_tokens: true` se convertía en 1 | `assert 1 == 0` | metadatos blandos: cualquier valor inválido es 0 |
+
+Suite: 44 → 51 passed. Comprobación propia posterior con una sonda de canario
+distinta (`sk-OWNPROBE-7731`): 3b `leak: False`, 3d `whole key: False`, `prefixes >3: False`.
+
+**Lección de método:** la redacción de secretos necesita test *adversario*. Los dos
+defectos de fuga sobrevivieron a la primera corrección porque los tests solo miraban
+el caso "el cuerpo no contiene la clave", que es exactamente el caso que un servidor
+con un defecto no produce.
+
 ## Progreso
 
 Implementación completa y verificada. Catálogo real reflejado en `config/models.yaml`
