@@ -64,17 +64,44 @@ no es un bug visible: es guardar de más y no notarlo nunca.
 
 ## Tareas
 
-- [ ] NAU-13-T1 Esquema y migración inicial (tablas del spec 9 con sus claves foráneas). Aceptación: crear la base en un fichero temporal funciona y es idempotente. Riesgo RDD: medio
-- [ ] NAU-13-T2 `record_decision()` con respuestas de Clef e intentos en una transacción. Aceptación: una decisión con dos intentos deja 1 + N + M filas. Riesgo RDD: medio
-- [ ] NAU-13-T3 `list_decisions()` y `get_decision()` para el dashboard. Aceptación: devuelven lo escrito, ordenado y con sus respuestas. Riesgo RDD: bajo
-- [ ] NAU-13-T4 La API no admite contenido: sin parámetro de texto libre. Aceptación: un test que recorre las firmas y comprueba que no existe. Riesgo RDD: **alto**
-- [ ] NAU-13-T5 Canario: prompt y clave no aparecen en ninguna columna de ninguna tabla. Aceptación: recorrido completo de `sqlite_master` + filas. Riesgo RDD: **alto**
+- [x] NAU-13-T1 Esquema y migración inicial (tablas del spec 9 con sus claves foráneas). Aceptación: crear la base en un fichero temporal funciona y es idempotente. Riesgo RDD: medio
+- [x] NAU-13-T2 `record_decision()` con respuestas de Clef e intentos en una transacción. Aceptación: una decisión con dos intentos deja 1 + N + M filas. Riesgo RDD: medio
+- [x] NAU-13-T3 `list_decisions()` y `get_decision()` para el dashboard. Aceptación: devuelven lo escrito, ordenado y con sus respuestas. Riesgo RDD: bajo
+- [x] NAU-13-T4 La API no admite contenido: sin parámetro de texto libre. Aceptación: un test que recorre las firmas y comprueba que no existe. Riesgo RDD: **alto**
+- [ ] NAU-13-T6 Cablear el log en el proxy. Aceptación: una petición deja una fila con modelo, nivel y tiempos, y el stream no se bloquea. Riesgo RDD: **alto**
+- [x] NAU-13-T5 Canario: prompt y clave no aparecen en ninguna columna de ninguna tabla. Aceptación: recorrido completo de `sqlite_master` + filas. Riesgo RDD: **alto**
 
 ## Evidencia de verificación
 
 | Tarea | Prueba | Resultado | Commit |
 |---|---|---|---|
-| — | pendiente | — | — |
+| T1-T5 | `uv run pytest tests/test_decision_log.py` | RED de colección (`ImportError: log_store`) → 15 passed | `feat(gateway)` |
+| suite | `uv run pytest` | 231 → **246 passed** | `feat(gateway)` |
+| estático | `ruff check .` + `pyright` | 0 errores, 0 warnings | `feat(gateway)` |
+| canario propio | sonda del padre sobre las 3 tablas | `columnas con el prompt o la clave: NINGUNA` | `feat(gateway)` |
+
+### API pública expuesta
+
+`DecisionLogStore(path)` con `open()`, `record_decision(record, *, answers, attempts)`,
+`list_decisions(limit)` y `get_decision(request_id)`; más `DecisionRecord`, `ClefAnswer`,
+`Attempt`, `StoredDecision`, `DecisionLogEntry` y `DecisionLogError`. **Ningún parámetro de texto
+libre.**
+
+### Ambigüedades del modelo de datos, resueltas hacia el spec 9
+
+- La lista de tareas no incluía `clef_timeout`; el spec 9 sí. Se incluye.
+- El spec no fija vocabularios: `decision_source` y `outcome` son etiquetas cortas
+  (`clef`/`fallback`, `success`/`http_error`), `reasoning_level` es un `Literal` con los cuatro
+  niveles de la política. El cableado en el proxy debe usar estas mismas etiquetas.
+- `ATTEMPT` y `DECISION_ANSWER` se leen por orden de inserción (rowid), porque el spec no define
+  columna de orden.
+
+### Incidente de topología
+
+El worker implementó sobre el árbol que tenía (`dev`), no sobre `feature/nau-13-log`, y lo declaró
+como riesgo en su informe. Los dos ficheros eran nuevos, así que viajaron con el cambio de rama:
+se ejecutó la suite en la rama correcta (222 = 207 sin proxy + 15 nuevos) y recién entonces se
+fusionó.
 
 ## Revisión nativa (RDD)
 
@@ -84,8 +111,9 @@ no es un bug visible: es guardar de más y no notarlo nunca.
 
 ## Progreso
 
-Documento abierto.
+Capa de datos fusionada. Falta el cableado: el proxy todavía no escribe en el log.
 
 ## Siguiente paso
 
-T1 a T5.
+T6: cablear el log en `gateway/proxy.py` (una escritura por petición, sin bloquear el stream) y
+el SSE del feed en vivo.
