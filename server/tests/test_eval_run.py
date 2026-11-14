@@ -132,10 +132,14 @@ def test_r3_replays_the_router_choice_per_prompt() -> None:
     # No network, no judgement: R3 quality is exactly the mean of the rows the
     # policy selected, prompt by prompt.
     chosen = [row for _, row in report["debug_r3_choices"].items()]
-    assert chosen[0] == "fast-a", "a trivial chat goes to t1_fast"
+    # MEASURED 2026-11-14 (NAU-14 matrix): the chat_casual d0 row's measured
+    # winner is deepseek-v4-flash (2.5-4.8 s at q 4.0), not the hypothesis
+    # table's t1_fast model, so a trivial chat elects it when it is in the
+    # inventory.
+    assert chosen[0] == "deepseek-v4-flash", "a trivial chat goes to the measured d0 winner"
     assert chosen[1] == "deepseek-v4-flash", "hard coding degrades to the next ranked candidate"
     assert r3["coverage"] == 1.0
-    assert r3["quality"] == (4.0 + 3.0) / 2
+    assert r3["quality"] == (3.0 + 3.0) / 2
 
 
 def test_r3_leaves_uncovered_prompts_out_of_the_average() -> None:

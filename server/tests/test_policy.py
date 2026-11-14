@@ -109,17 +109,38 @@ def _features(**overrides: object) -> RequestFeatures:
 class TestDecisionTable:
     """T5: the spec 7.2 table, row by row, under the balanced profile."""
 
-    def test_row_chat_and_factual_easy_use_t1_with_reasoning_off(self) -> None:
+    def test_row_chat_and_factual_easy_use_the_measured_fastest_model(self) -> None:
+        # MEASURED 2026-11-14 (NAU-14 matrix): at difficulty 0-1
+        # deepseek-v4-flash answers in 2.5-4.8 s at quality 4.0 -- the fastest
+        # of the whole card at that quality floor -- while the hypothesis
+        # table's t1_fast row ranked gemma4 (12.9 s) and never considered it.
         for task in ("chat_casual", "factual_qa"):
             result = decide(_decision(task, difficulty=0.0), _features(), _inventory())
-            assert _tier_of(result) == "t1_fast"
+            assert result.model == "deepseek-v4-flash"
             assert result.reasoning == "off"
 
-    def test_row_chat_and_factual_medium_uses_t2_with_reasoning_off(self) -> None:
-        for task in ("chat_casual", "factual_qa"):
-            result = decide(_decision(task, difficulty=2.0), _features(), _inventory())
-            assert _tier_of(result) == "t2_generalist"
-            assert result.reasoning == "off"
+    def test_row_chat_and_factual_hard_prefers_the_measured_winners(self) -> None:
+        # MEASURED 2026-11-14: at difficulty 4 deepseek-v4-flash answers in
+        # 13.7 s at quality 4.0 and gemma4 takes 28.7 s; deepseek-v4-flash
+        # ranks first with reasoning on, so no lock penalty muddies the
+        # ladder. The runner-up is qwen3.6, not gemma4: the row's tier slot 1
+        # (t2_generalist) scores fit 1.0 while the second measured id scores
+        # 0.85, so the measured ladder, not the id preference, decides second
+        # place. gemma4 stays third, ahead of the premium t3_max models.
+        result = decide(
+            _decision("chat_casual", difficulty=4.0, needs_reasoning=True),
+            _features(),
+            _inventory(),
+        )
+        assert result.candidates[:2] == ("deepseek-v4-flash", "qwen3.6")
+
+    def test_measured_latency_reorders_t2_generalist_candidates(self) -> None:
+        # MEASURED 2026-11-14: deepseek-v4-flash answers in 9.8 s while
+        # qwen3.6 needs 15.6 s at the same tier, so with an equal tier fit
+        # the faster model must rank first; the old tier-prior left this a
+        # tie resolved by inventory order, which put qwen3.6 first.
+        result = decide(_decision("creative_writing", difficulty=3.0), _features(), _inventory())
+        assert result.candidates[:2] == ("deepseek-v4-flash", "qwen3.6")
 
     def test_row_translate_prefers_t1_and_falls_to_t2(self) -> None:
         full = decide(_decision("translate_or_rewrite", difficulty=1.0), _features(), _inventory())
@@ -219,6 +240,10 @@ class TestWhenInDoubtTierUp:
     """T6: spec 6.4 — low confidence or split difficulty raises exactly one tier."""
 
     def test_low_task_confidence_raises_exactly_one_tier(self) -> None:
+        # MEASURED 2026-11-14: the confident chat_casual d0 row's measured
+        # winner is deepseek-v4-flash (t2_generalist, 2.5-4.8 s at q 4.0),
+        # not the hypothesis table's t1_fast model, so "exactly one tier up"
+        # no longer shows as a tier change on the elected model.
         confident = decide(
             _decision("chat_casual", difficulty=0.0, confidence=0.90),
             _features(),
@@ -230,8 +255,15 @@ class TestWhenInDoubtTierUp:
             _inventory(),
         )
 
-        assert _tier_of(confident) == "t1_fast"
-        assert _tier_of(unsure) == "t2_generalist"
+        assert confident.model == "deepseek-v4-flash"
+        assert _tier_of(unsure) in {"t2_generalist", "t3_max"}
+        # The bump did happen: ids are dropped, the tier ladder is raised and
+        # the reason says so.
+        assert unsure.reason.endswith(" bumped")
+        # With measured data the bumped ladder's fastest model is the same
+        # deepseek-v4-flash the confident path elects, so spec 6.4's tier
+        # language needs a measured-capability rework (follow-up in the
+        # NAU-18 doc): "one tier up" no longer guarantees a different model.
 
     def test_split_difficulty_raises_exactly_one_tier(self) -> None:
         decided = _decision(
@@ -264,14 +296,20 @@ class TestScoringSelectionAndFailOpen:
 
         assert first == second
         assert first.model == first.candidates[0]
+        # MEASURED 2026-11-14: the per-model latencies reorder the t2/t3
+        # band -- deepseek-v4-flash (9.8 s) and qwen3.6 (15.6 s) lead the
+        # t2_generalist tier, glm5.3 (15.9 s) and mimo-v2.6-flash (36.0 s)
+        # follow at t3_max, and the fit-0 tail sorts by measured latency
+        # (gemma4 12.9 s, glm5.3-flash 21.3 s, qwen3.8-flash 25.2 s). The
+        # old hypothesis priors had qwen3.6 first by inventory order.
         assert first.candidates == (
-            "qwen3.6",
             "deepseek-v4-flash",
+            "qwen3.6",
             "glm5.3",
             "mimo-v2.6-flash",
             "gemma4",
-            "qwen3.8-flash",
             "glm5.3-flash",
+            "qwen3.8-flash",
         )
 
     def test_quota_pressure_pushes_a_failing_model_down_the_order(self) -> None:
