@@ -10,17 +10,24 @@ One route, two behaviors (spec 5, 8, 12 and 14):
 - Any other model is a byte-for-byte pass-through: no decision, no header, no
   body rewrite.
 
-Relay rules: without `stream` the upstream body is forwarded as received; with
-`stream` bytes are relayed as they arrive, never buffered. An upstream error
-before the first byte propagates with its status; once the stream has started
-a break propagates and is never retried.
+Relay rules (NAU-10): a routed request walks the policy's candidate chain —
+the elected model first — skipping candidates the circuit breaker holds open,
+with at most `fallback_max_retries` retries after the first attempt. The
+model switches only before the first byte reaches the client; once the stream
+has started a break propagates and is never retried. A 429 honours
+`Retry-After` before the next attempt, a 402 marks the model's quota
+exhausted on the breaker, and exhausting the chain propagates the last real
+upstream status and body — never a generic 500. One limiter slot per client
+key bounds the in-flight routed requests. Without `stream` the upstream body
+is forwarded as received; with `stream` bytes are relayed as they arrive,
+never buffered.
 
 Secret hygiene: the client's `Authorization` header is forwarded to the chat
 upstream and touches nothing else — it is never stored, logged, echoed back or
 embedded in an error message.
 
 Decision log (NAU-13 T6): every routed request writes one decision row — model,
-reasoning level, source, timings, the Clef answers and the one upstream attempt
+reasoning level, source, timings, the Clef answers and every upstream attempt
 — through the optional `DecisionLogStore`, with the conversation entering only
 as a hash. Pass-throughs write nothing (no decision was made), streaming
 records only once the stream ends, and a raising store never breaks the
@@ -32,7 +39,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from hashlib import sha256
 from typing import Any, Literal, cast
 
@@ -45,6 +52,7 @@ from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.errors import ClefError
 from nan_auto.clef_client.questions import build_questions, build_state
 from nan_auto.clef_client.types import Decision
+from nan_auto.gateway.fallback import CircuitBreaker, ConcurrencyLimiter
 from nan_auto.gateway.log_store import (
     Attempt,
     ClefAnswer,
@@ -78,10 +86,14 @@ def proxy_router(
     """Build the chat-completions route over one registry, Clef and upstream client.
 
     With a `store`, every routed request additionally leaves one decision-log
-    row; without one, logging stays off and the route behaves exactly as before.
+    row (NAU-13 T6); without it, decision logging stays off.
     """
     router = APIRouter()
     upstream_url = f"{settings.nan_base_url}{_CHAT_COMPLETIONS_PATH}"
+    breaker = CircuitBreaker(
+        threshold=settings.breaker_threshold, cooldown_s=settings.breaker_cooldown_s
+    )
+    limiter = ConcurrencyLimiter(limit=settings.key_concurrency_limit)
 
     @router.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
@@ -137,6 +149,8 @@ def proxy_router(
             level = "off"
             reason = f"clef_unavailable fallback={model}"
             decision_id = ""
+            # Fail open (spec 5.3): only the default model can answer.
+            chain: tuple[str, ...] = (settings.default_model,)
         else:
             result = decide(
                 decision,
@@ -154,18 +168,8 @@ def proxy_router(
                 return _error_response(
                     502, "no model available", err_type="api_error", code="no_model"
                 )
+            chain = result.candidates or (model,)
 
-        info = registry.models.get(model)
-        if info is not None:
-            outbound.update(reasoning_params(info, level))
-        outbound["model"] = model
-        headers = {
-            "x-nan-auto-model": model,
-            "x-nan-auto-decision-id": decision_id,
-            "x-nan-auto-reason": reason,
-            "x-nan-auto-fallback": "",  # the fallback chain arrives with NAU-10
-        }
-        content = json.dumps(outbound).encode("utf-8")
         outbound_headers = _upstream_headers(authorization)
         trace: _DecisionTrace | None = (
             _DecisionTrace(
@@ -184,21 +188,195 @@ def proxy_router(
             if store is not None
             else None
         )
-        if bool(outbound.get("stream")):
-            return await _relay_streamed(
-                client,
-                upstream_url,
-                content,
-                outbound_headers,
-                extra_headers=headers,
-                trace=trace,
+
+        # One limiter slot per client key covers the whole walk; on the
+        # streaming-success path the relay generator takes the release over,
+        # so the slot spans the stream too. Every other exit path releases
+        # here, cancellation included (`ConcurrencyLimiter.slot` never
+        # consumes a permit it did not hand out).
+        slot_cm = limiter.slot(authorization)
+        await slot_cm.__aenter__()
+        handed_off = False  # True once the streaming relay owns the release
+        released = False
+
+        async def release() -> None:
+            """Return the slot exactly once; every delivery path ends in one."""
+            nonlocal released
+            if released:
+                return
+            released = True
+            await slot_cm.__aexit__(None, None, None)
+
+        try:
+            tried: list[str] = []
+            attempts_used = 0
+            last_real: tuple[int, bytes, str] | None = None  # status, body, media type
+            transport_failed_last = False
+            handoff: tuple[httpx.Response, str] | None = None
+            final: Response | None = None
+            is_stream = bool(outbound.get("stream"))
+            max_attempts = 1 + max(settings.fallback_max_retries, 0)
+
+            def routed_headers() -> dict[str, str]:
+                """The `x-nan-auto-*` annotations for the delivery as it ended.
+
+                `x-nan-auto-fallback` lists every model tried before the final
+                one, in policy order, and is present but empty otherwise.
+                """
+                return {
+                    "x-nan-auto-model": tried[-1],
+                    "x-nan-auto-decision-id": decision_id,
+                    "x-nan-auto-reason": reason,
+                    "x-nan-auto-fallback": ",".join(tried[:-1]),
+                }
+
+            while attempts_used < max_attempts and final is None and handoff is None:
+                # The breaker decides who may be tried; the walk itself never
+                # visits a candidate twice, so a 402 model is never retried.
+                candidate = next(
+                    (
+                        model_id
+                        for model_id in chain
+                        if model_id not in tried and not breaker.is_open(model_id)
+                    ),  # noqa: E501
+                    None,
+                )
+                if candidate is None:
+                    break
+                attempts_used += 1
+                tried.append(candidate)
+                payload = dict(outbound)
+                info = registry.models.get(candidate)
+                if info is not None:
+                    payload.update(reasoning_params(info, level))
+                payload["model"] = candidate
+                attempt_phase = time.perf_counter()
+                received: httpx.Response | None = None
+                is_streaming = False
+                try:
+                    if is_stream:
+                        request_attempt = client.build_request(
+                            "POST",
+                            upstream_url,
+                            content=json.dumps(payload).encode("utf-8"),
+                            headers=outbound_headers,
+                        )
+                        received = await client.send(request_attempt, stream=True)
+                        is_streaming = True
+                    else:
+                        received = await client.post(
+                            upstream_url,
+                            content=json.dumps(payload).encode("utf-8"),
+                            headers=outbound_headers,
+                        )
+                except httpx.HTTPError:
+                    # The exception text is not trusted: it never reaches the client.
+                    received = None
+                retry_after = 0.0
+                if received is None:
+                    # Transport failure before any byte: a failed attempt, and
+                    # if the walk ends here there is no status to propagate.
+                    breaker.record_failure(candidate)
+                    transport_failed_last = True
+                    if trace is not None:
+                        trace.attempt(
+                            model=candidate, status=None, latency_ms=_elapsed_ms(attempt_phase)
+                        )
+                else:
+                    status = received.status_code
+                    if trace is not None:
+                        trace.attempt(
+                            model=candidate, status=status, latency_ms=_elapsed_ms(attempt_phase)
+                        )
+                    if status < 400:
+                        breaker.record_success(candidate)
+                        media_type = received.headers.get(
+                            "Content-Type", _SSE_MEDIA_TYPE if is_streaming else _JSON_MEDIA_TYPE
+                        )
+                        if is_streaming:
+                            # Bytes about to flow: past this point the model
+                            # can no longer be switched (spec 5.5).
+                            handoff = (received, media_type)
+                        else:
+                            final = Response(
+                                content=received.content,
+                                status_code=status,
+                                media_type=media_type,
+                                headers=routed_headers(),
+                            )
+                    elif status < 500 and status not in (402, 429):
+                        # A client error no candidate can fix: the real one
+                        # propagates, untouched by the walk.
+                        body, media_type = await _buffer_body(received, is_streaming)
+                        final = Response(
+                            content=body,
+                            status_code=status,
+                            media_type=media_type,
+                            headers=routed_headers(),
+                        )
+                    else:
+                        if status == 402:
+                            breaker.mark_quota_exhausted(candidate)
+                        else:
+                            breaker.record_failure(candidate)
+                        body, media_type = await _buffer_body(received, is_streaming)
+                        last_real = (status, body, media_type)
+                        transport_failed_last = False
+                        retry_after = _retry_after_seconds(received.headers.get("Retry-After"))
+                if final is not None or handoff is not None:
+                    break
+                # Honour an announced `Retry-After` before the next attempt —
+                # but wait only when another attempt can actually follow.
+                more = any(
+                    model_id not in tried and not breaker.is_open(model_id) for model_id in chain
+                )
+                if retry_after > 0.0 and more and attempts_used < max_attempts:
+                    await asyncio.sleep(retry_after)
+
+            if handoff is not None:
+                stream_upstream, media_type = handoff
+                handed_off = True  # the relay generator releases the slot
+                return StreamingResponse(
+                    _chunks(stream_upstream, trace, on_done=release),
+                    status_code=stream_upstream.status_code,
+                    media_type=media_type,
+                    headers=routed_headers(),
+                )
+            if final is not None:
+                if trace is not None:
+                    await trace.finish()
+                return final
+            if not tried:
+                # Every candidate is out (breaker open, quota gone): there is
+                # no upstream status of this request left to propagate.
+                return _error_response(
+                    502, "no model available", err_type="api_error", code="no_model"
+                )
+            # The delivery plan failed as a whole: every candidate still in it
+            # shares this request's failure, so the next walk starts clean of
+            # the models this chain implicated (spec 5.5).
+            # Only attempted models earn a failure. Marking the candidates the
+            # budget never reached would blame a healthy model for someone
+            # else's outage and quietly degrade routing during the cooldown.
+            if trace is not None:
+                await trace.finish(delivered=False)
+            if transport_failed_last or last_real is None:
+                return _error_response(
+                    502,
+                    "upstream chat request failed",
+                    err_type="api_error",
+                    code="upstream_unavailable",
+                )
+            exhaust_status, exhaust_body, exhaust_media_type = last_real
+            return Response(
+                content=exhaust_body,
+                status_code=exhaust_status,
+                media_type=exhaust_media_type,
+                headers=routed_headers(),
             )
-        response = await _relay_full(
-            client, upstream_url, content, outbound_headers, extra_headers=headers, trace=trace
-        )
-        if trace is not None:
-            trace.finish()
-        return response
+        finally:
+            if not handed_off:
+                await release()
 
     return router
 
@@ -228,27 +406,24 @@ async def _relay_full(
     url: str,
     content: bytes,
     headers: dict[str, str],
-    extra_headers: Mapping[str, str] | None = None,
-    trace: _DecisionTrace | None = None,
 ) -> Response:
-    """Forward non-streaming and reply with the upstream body as received."""
-    phase = time.perf_counter()
+    """Forward a pass-through non-streaming: the upstream body as received.
+
+    Requests without a router alias take this path untouched — the fallback
+    walk belongs to the routed branch only. No decision was made, so nothing
+    is written to the decision log.
+    """
     try:
         upstream = await client.post(url, content=content, headers=headers)
     except httpx.HTTPError:
         # The exception text is not trusted: it must never reach the client.
-        if trace is not None:
-            trace.attempt(status=None, latency_ms=_elapsed_ms(phase))
         return _error_response(
             502, "upstream chat request failed", err_type="api_error", code="upstream_unavailable"
         )
-    if trace is not None:
-        trace.attempt(status=upstream.status_code, latency_ms=_elapsed_ms(phase))
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
         media_type=upstream.headers.get("Content-Type", _JSON_MEDIA_TYPE),
-        headers=dict(extra_headers or {}),
     )
 
 
@@ -257,19 +432,17 @@ async def _relay_streamed(
     url: str,
     content: bytes,
     headers: dict[str, str],
-    extra_headers: Mapping[str, str] | None = None,
-    trace: _DecisionTrace | None = None,
 ) -> Response:
-    """Forward streaming and relay upstream bytes incrementally, never buffered."""
+    """Forward a pass-through streaming request, relayed incrementally.
+
+    The routed branch walks candidates before relaying; a pass-through request
+    goes upstream exactly once, and a mid-stream break propagates.
+    """
     request = client.build_request("POST", url, content=content, headers=headers)
-    phase = time.perf_counter()
     try:
         upstream = await client.send(request, stream=True)
     except httpx.HTTPError:
         # Failure before the first byte: no status to propagate, answer our own.
-        if trace is not None:
-            trace.attempt(status=None, latency_ms=_elapsed_ms(phase))
-            trace.finish(delivered=False)
         return _error_response(
             502, "upstream chat request failed", err_type="api_error", code="upstream_unavailable"
         )
@@ -277,33 +450,50 @@ async def _relay_streamed(
         # Error before the first byte: propagate status and body, close cleanly.
         body = await upstream.aread()
         await upstream.aclose()
-        if trace is not None:
-            trace.attempt(status=upstream.status_code, latency_ms=_elapsed_ms(phase))
-            trace.finish(delivered=False)
         return Response(
             content=body,
             status_code=upstream.status_code,
             media_type=upstream.headers.get("Content-Type", _JSON_MEDIA_TYPE),
-            headers=dict(extra_headers or {}),
         )
-    if trace is not None:
-        trace.attempt(status=upstream.status_code, latency_ms=_elapsed_ms(phase))
     return StreamingResponse(
-        _chunks(upstream, trace),
+        _chunks(upstream),
         status_code=upstream.status_code,
         media_type=upstream.headers.get("Content-Type", _SSE_MEDIA_TYPE),
-        headers=dict(extra_headers or {}),
     )
 
 
+async def _buffer_body(response: httpx.Response, streaming: bool) -> tuple[bytes, str]:
+    """Read an upstream response the walk will not relay, and close it."""
+    if streaming:
+        body = await response.aread()
+        await response.aclose()
+    else:
+        body = response.content
+    return body, response.headers.get("Content-Type", _JSON_MEDIA_TYPE)
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    """A `Retry-After` header as seconds; an unusable value waits zero."""
+    if not value:
+        return 0.0
+    try:
+        return max(float(value), 0.0)
+    except ValueError:
+        return 0.0
+
+
 async def _chunks(
-    upstream: httpx.Response, trace: _DecisionTrace | None = None
+    upstream: httpx.Response,
+    trace: _DecisionTrace | None = None,
+    on_done: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncIterator[bytes]:
     """Relay upstream bytes as they arrive; a mid-stream break propagates.
 
-    The decision write is scheduled in `finally`, so the log records once the
+    The decision write is awaited in `finally`, so the log records once the
     stream ends — normally, broken or disconnected — and never before the first
-    byte has reached the client (NAU-13 T6).
+    byte has reached the client (NAU-13 T6). `on_done`, when given, runs in the
+    same `finally`: it releases the limiter slot the walk handed over, on every
+    path including cancellation.
     """
     first_byte_seen = False
     delivered = False
@@ -316,8 +506,10 @@ async def _chunks(
         delivered = True
     finally:
         if trace is not None:
-            trace.finish(delivered=delivered)
+            await trace.finish(delivered=delivered)
         await upstream.aclose()
+        if on_done is not None:
+            await on_done()
 
 
 def _conversation_hash(conversation_key: str) -> str:
@@ -373,24 +565,6 @@ def _clef_answers(decision: Decision) -> tuple[ClefAnswer, ...]:
     )
 
 
-_PENDING_WRITES: set[asyncio.Task[None]] = set()
-
-
-def _schedule_write(
-    store: DecisionLogStore,
-    record: DecisionRecord,
-    *,
-    answers: tuple[ClefAnswer, ...],
-    attempts: tuple[Attempt, ...],
-) -> None:
-    """Fire-and-forget the decision write; it never blocks a response."""
-    task = asyncio.get_running_loop().create_task(
-        _write_decision(store, record, answers=answers, attempts=attempts)
-    )
-    _PENDING_WRITES.add(task)  # keep a reference so the task is never collected
-    task.add_done_callback(_PENDING_WRITES.discard)
-
-
 async def _write_decision(
     store: DecisionLogStore,
     record: DecisionRecord,
@@ -407,7 +581,7 @@ async def _write_decision(
 
 
 class _DecisionTrace:
-    """Collects one routed request's typed facts and schedules its log write.
+    """Collects one routed request's typed facts and writes its log row.
 
     Only ids, enums and milliseconds ever enter the log (spec 9): the
     conversation arrives already hashed and no field carries message text or a
@@ -440,31 +614,48 @@ class _DecisionTrace:
         self._clef_latency_ms = clef_latency_ms
         self._answers = answers
         self._started = started
-        self._attempt_status: int | None = None  # None: upstream never answered
-        self._attempt_latency_ms = 0
+        self._attempts: list[tuple[str, int | None, int]] = []
         self._ttft_ms: int | None = None
 
-    def attempt(self, *, status: int | None, latency_ms: int) -> None:
-        """Record one upstream delivery attempt; `status` None means no answer."""
-        self._attempt_status = status
-        self._attempt_latency_ms = latency_ms
+    def attempt(self, *, model: str, status: int | None, latency_ms: int) -> None:
+        """Record one upstream attempt; `status` None means no answer arrived."""
+        self._attempts.append((model, status, latency_ms))
 
     def first_byte(self) -> None:
         self._ttft_ms = _elapsed_ms(self._started)
 
-    def finish(self, *, delivered: bool = True) -> None:
-        """Schedule the decision write; never blocks the caller.
+    async def finish(self, *, delivered: bool = True) -> None:
+        """Write the decision row; the caller awaits it at the delivery's end.
 
-        The attempt outcome uses the store's tags verbatim: `success` when the
-        upstream answered below 400 and the delivery completed, `http_error`
-        otherwise (the HTTP status, when one was seen, is kept as a fact).
+        Every attempt in the walk gets a row. Earlier attempts always ended in
+        a retryable error, so each one logs `http_error` with the HTTP status
+        it saw (None for a transport failure). The last attempt's outcome uses
+        the store's tags verbatim: `success` when the upstream answered below
+        400 and the delivery completed, `http_error` otherwise (the HTTP
+        status, when one was seen, is kept as a fact). The request's chosen
+        model is the one the delivery ended on.
         """
-        status = self._attempt_status
-        if delivered and status is not None and status < 400:
-            outcome, http_status = "success", status
-        else:
-            outcome, http_status = "http_error", status
-        _schedule_write(
+        attempts: list[Attempt] = [
+            Attempt(model=model, outcome="http_error", http_status=status, latency_ms=latency_ms)
+            for model, status, latency_ms in self._attempts[:-1]
+        ]
+        chosen = self._chosen_model
+        if self._attempts:
+            last_model, last_status, last_latency = self._attempts[-1]
+            chosen = last_model
+            if delivered and last_status is not None and last_status < 400:
+                outcome, http_status = "success", last_status
+            else:
+                outcome, http_status = "http_error", last_status
+            attempts.append(
+                Attempt(
+                    model=last_model,
+                    outcome=outcome,
+                    http_status=http_status,
+                    latency_ms=last_latency,
+                )
+            )
+        await _write_decision(
             self._store,
             DecisionRecord(
                 request_id=self._request_id,
@@ -472,21 +663,14 @@ class _DecisionTrace:
                 profile=self._profile,
                 reasoning_level=self._reasoning_level,
                 decision_source=self._decision_source,
-                chosen_model=self._chosen_model,
+                chosen_model=chosen,
                 clef_timeout=self._clef_timeout,
                 clef_latency_ms=self._clef_latency_ms,
                 ttft_ms=self._ttft_ms,
                 total_ms=_elapsed_ms(self._started),
             ),
             answers=self._answers,
-            attempts=(
-                Attempt(
-                    model=self._chosen_model,
-                    outcome=outcome,
-                    http_status=http_status,
-                    latency_ms=self._attempt_latency_ms,
-                ),
-            ),
+            attempts=tuple(attempts),
         )
 
 
