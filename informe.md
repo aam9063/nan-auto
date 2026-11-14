@@ -3,8 +3,7 @@
 > Documento vivo. Registra qué se construye, cómo, **qué se rompió en el camino y cómo se
 > detectó y resolvió**. Se actualiza al final de cada unidad de trabajo.
 >
-> Última actualización: 2026-11-14 · rama `dev` en `4b9679a` · 265 tests; NAU-10 en
-> `feature/nau-10-fallback` con **284 tests** esperando verificación y merge.
+> Última actualización: 2026-11-14 · rama `dev` en `0bb5bbc` · **286 tests** en verde.
 
 ---
 
@@ -62,14 +61,13 @@ el gateway apaga el razonamiento de verdad en tareas triviales. No siempre fue a
 | NAU-09 | Adaptador de razonamiento por modelo | hecho | `28e2c37` |
 | — | Calibración medida del razonamiento | hecho | `bc95661` |
 | — | Preferencia por modelos que respetan `off` | hecho | `2e18f03` |
-| NAU-10 | Fallback, circuit breaker y limitador | implementado, en verificación | `feature/nau-10-fallback` |
+| NAU-10 | Fallback, circuit breaker y limitador | hecho + verificado | `0bb5bbc` |
 | NAU-13 | Log de decisiones sin contenido, cableado en el proxy | hecho | `14d0ac7` |
 | NAU-14/15 | Benchmark y evaluación offline | pendiente | — |
 | NAU-16/17 | Dashboard | pendiente | — |
 | NAU-12/11 | Estabilidad conversacional y presupuesto de decisión | pendiente | — |
 
-**Números reales**, no estimados: 265 tests en `dev`, 284 con NAU-10; `ruff` limpio y
-`pyright` 0 errores en ambos.
+**Números reales**, no estimados: 286 tests, `ruff` limpio, `pyright` 0 errores.
 
 ---
 
@@ -517,7 +515,43 @@ registro caliente, el saludo aterriza en T1 con razonamiento apagado.
 **Estado:** queda como pendiente de diseño (NAU-11) decidir si el arranque debe precalentar el
 registro; hoy la primera decisión puede pagar el refresco.
 
-### 5.18 Errores menores, todos reales
+### 5.18 El verificador encontró que una cabecera contradecía la spec
+
+**Síntoma:** `x-nan-auto-fallback` se enviaba **siempre**, vacía cuando no hubo fallback.
+
+**Causa:** dos tests anteriores fijaban `== ""`, y se tomó esa presencia vacía como contrato. La
+spec 8 dice "modelos intentados antes del definitivo, **si hubo**", y el propio documento de la
+feature lo repetía.
+
+**Detección:** el verificador independiente, comparando la implementación con el texto de la spec
+en lugar de con los tests.
+
+**Resolución:** la cabecera solo aparece si hubo fallback; los tres tests que fijaban la presencia
+vacía pasan a fijar la **ausencia**. Es la segunda vez en esta unidad que un test era el obstáculo
+(ver §5.11).
+
+**Lección:** cuando los tests y la spec discrepan, la spec manda y el test se corrige. Los tests
+son la memoria de lo que creímos, no la definición de lo que queremos.
+
+### 5.19 Un 402 retiraba un modelo hasta reiniciar el proceso
+
+**Síntoma:** un solo 402 sacaba al modelo de circulación **para siempre**, hasta reiniciar el
+gateway.
+
+**Causa:** el diseño "un 402 lo saca hasta la renovación de cuota" no tenía **señal de
+renovación**: NaN no publica endpoint de cuota, y `renew_quota()` existía sin ningún llamador en
+producción.
+
+**Detección:** el verificador, al buscar llamadores de `renew_quota` y no encontrar ninguno.
+
+**Resolución:** la cuota caduca por tiempo (`quota_cooldown_s`, 1 h por defecto), mucho más larga
+que el cooldown normal (60 s), y `renew_quota()` queda como API para cuando exista una señal real.
+Un modelo puede recibir un 402 de más por hora; retirarlo para siempre es peor.
+
+**Lección:** una regla sin señal que la active es una regla que en la práctica no caduca nunca.
+Al escribir "hasta que X ocurra", hay que preguntarse **quién detecta X**.
+
+### 5.20 Errores menores, todos reales
 
 | Error | Detección | Resolución |
 |---|---|---|
@@ -552,7 +586,7 @@ Todo lo que sigue está **observado**, no narrado:
 
 | Qué | Resultado |
 |---|---|
-| Suite del servidor | **284 passed** (265 en `dev` sin NAU-10) |
+| Suite del servidor | **286 passed** |
 | Lint y tipos | `ruff` limpio · `pyright` 0 errores, 0 warnings |
 | Contrato de Clef | 3 fixtures reales, parser con 9 tests |
 | Catálogo real | 18 → 12 servibles; 6 excluidos con motivo |
@@ -603,7 +637,8 @@ Todo lo que sigue está **observado**, no narrado:
 6. **Decir "no observé RED" y demostrarlo con mutación** es más útil que fingir un TDD que no
    pasó.
 7. **Un test puede fosilizar una limitación y volverse el obstáculo.** Ante un rojo, la pregunta
-   es qué afirma el test y si sigue siendo verdad, no cómo hacerlo pasar.
+   es qué afirma el test y si sigue siendo verdad, no cómo hacerlo pasar. Pasó dos veces en la
+   misma unidad: un test prohibía el fallback, otro fijaba una cabecera que la spec no autoriza.
 8. **Un test verde no es un sistema que funciona.** El timeout de 5 s y el test con fecha fija
    pasaron por delante de 263 tests. Lo que los encontró fue un servidor real, una petición real
    y un reloj que avanzó.
