@@ -52,6 +52,7 @@ from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.errors import ClefError
 from nan_auto.clef_client.questions import build_questions, build_state
 from nan_auto.clef_client.types import Decision
+from nan_auto.gateway.events import DecisionBus, decision_payload
 from nan_auto.gateway.fallback import CircuitBreaker, ConcurrencyLimiter
 from nan_auto.gateway.log_store import (
     Attempt,
@@ -82,11 +83,13 @@ def proxy_router(
     settings: Settings,
     client: httpx.AsyncClient,
     store: DecisionLogStore | None = None,
+    bus: DecisionBus | None = None,
 ) -> APIRouter:
     """Build the chat-completions route over one registry, Clef and upstream client.
 
     With a `store`, every routed request additionally leaves one decision-log
-    row (NAU-13 T6); without it, decision logging stays off.
+    row (NAU-13 T6); without it, decision logging stays off. With a `bus`, each
+    recorded decision is also published to the dashboard's SSE feed (NAU-16a).
     """
     router = APIRouter()
     upstream_url = f"{settings.nan_base_url}{_CHAT_COMPLETIONS_PATH}"
@@ -176,6 +179,7 @@ def proxy_router(
         trace: _DecisionTrace | None = (
             _DecisionTrace(
                 store,
+                bus=bus,
                 request_id=uuid.uuid4().hex,
                 conversation_hash=_conversation_hash(features.conversation_key),
                 profile=options.profile or body["model"],
@@ -576,13 +580,41 @@ async def _write_decision(
     *,
     answers: tuple[ClefAnswer, ...],
     attempts: tuple[Attempt, ...],
+    bus: DecisionBus | None = None,
 ) -> None:
-    """Write one decision, degrading to a contentless warning on failure."""
+    """Write one decision, degrading to a contentless warning on failure.
+
+    Only after the row is safely stored is it published to the SSE bus: a
+    subscriber never sees a decision the log does not hold, and a failed write
+    publishes nothing. The publish itself never blocks — the bus drops a slow
+    subscriber instead (NAU-16a).
+    """
     try:
         await store.record_decision(record, answers=answers, attempts=attempts)
     except Exception:
         # Never break a response for a log failure; the line carries no content.
         _logger.warning("decision log write failed for %s", record.request_id)
+        return
+    if bus is None:
+        return
+    bus.publish(
+        decision_payload(
+            request_id=record.request_id,
+            profile=record.profile,
+            chosen_model=record.chosen_model,
+            reasoning_level=record.reasoning_level,
+            decision_source=record.decision_source,
+            clef_timeout=record.clef_timeout,
+            clef_latency_ms=record.clef_latency_ms,
+            ttft_ms=record.ttft_ms,
+            total_ms=record.total_ms,
+            prompt_tokens=record.prompt_tokens,
+            completion_tokens=record.completion_tokens,
+            created_at=record.created_at.isoformat() if record.created_at else None,
+            answers=answers,
+            attempts=attempts,
+        )
+    )
 
 
 class _DecisionTrace:
@@ -597,6 +629,7 @@ class _DecisionTrace:
         self,
         store: DecisionLogStore,
         *,
+        bus: DecisionBus | None = None,
         request_id: str,
         conversation_hash: str,
         profile: str,
@@ -609,6 +642,7 @@ class _DecisionTrace:
         started: float,
     ) -> None:
         self._store = store
+        self._bus = bus
         self._request_id = request_id
         self._conversation_hash = conversation_hash
         self._profile = profile
@@ -676,6 +710,7 @@ class _DecisionTrace:
             ),
             answers=self._answers,
             attempts=tuple(attempts),
+            bus=self._bus,
         )
 
 

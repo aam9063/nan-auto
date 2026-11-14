@@ -6,6 +6,8 @@ from fastapi import FastAPI
 from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.mock import MockDecisionProvider
 from nan_auto.clef_client.nan import NanDecisionProvider
+from nan_auto.gateway.decisions import decisions_router, playground_router
+from nan_auto.gateway.events import DecisionBus
 from nan_auto.gateway.log_store import DecisionLogStore
 from nan_auto.gateway.proxy import proxy_router
 from nan_auto.registry.catalog import CatalogClient, load_card
@@ -70,6 +72,7 @@ def create_app(
     registry = registry or default_registry(settings)
     client = client or default_client(settings)
     provider = provider or default_provider(settings, client)
+    bus = DecisionBus()
     app = FastAPI(title="NaN Auto", version="0.1.0")
     model_ids = list(ROUTER_ALIASES)
 
@@ -87,7 +90,10 @@ def create_app(
         return {"object": "list", "data": payload}
 
     app.include_router(registry_router(registry))
-    app.include_router(proxy_router(registry, provider, settings, client, store))
+    app.include_router(decisions_router(bus, store))
+    app.include_router(playground_router(registry, provider, settings))
+    app.include_router(proxy_router(registry, provider, settings, client, store, bus=bus))
+    app.state.decision_bus = bus
     return app
 
 
