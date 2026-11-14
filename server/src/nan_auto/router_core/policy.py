@@ -28,14 +28,32 @@ from nan_auto.router_core.reasoning import honours_off
 
 # Initial tier ladder [HIPÓTESIS], from the card; "one tier up" follows it.
 _TIER_ORDER = ("t1_fast", "t2_generalist", "t3_max")
-# Tier → latency cost, unmeasured design-time priors [HIPÓTESIS]; the quality
-# matrix (NAU-14) replaces them later.
+# Tier → latency cost, unmeasured design-time priors [HIPÓTESIS]; kept only
+# as the fallback for models the quality matrix has not measured.
 _LATENCY_BY_TIER: Mapping[str, float] = {
     "t1_fast": 0.2,
     "t2_generalist": 0.4,
     "t3_max": 0.6,
 }
 _DEFAULT_LATENCY = 0.5
+# MEASURED 2026-11-14 (NAU-14 matrix, eval/data/quality.sqlite3): mean
+# end-to-end latency at the live default configuration, normalized to
+# minutes (mean_ms / 60000) so it lives on the same scale as the priors.
+# The card's tier ladder mispredicted these badly: deepseek-v4-flash is a
+# t2_generalist yet answers in 9.8 s, while qwen3.8-max needs 51.8 s.
+_MEASURED_LATENCY_BY_MODEL: Mapping[str, float] = {
+    "deepseek-v4-flash": 0.164,  # 9.8 s, mean quality 3.68
+    "gemma4": 0.215,  # 12.9 s, 3.93
+    "qwen3.6": 0.260,  # 15.6 s, 3.81
+    "glm5.3": 0.266,  # 15.9 s, 3.68
+    "deepseek-v4-pro": 0.283,  # 17.0 s, 3.07
+    "hy4": 0.342,  # 20.5 s, 3.04
+    "glm5.3-flash": 0.355,  # 21.3 s, 3.29
+    "kimi-k3.1-pro": 0.399,  # 23.9 s, 3.50
+    "qwen3.8-flash": 0.420,  # 25.2 s, 3.93
+    "mimo-v2.6-flash": 0.600,  # 36.0 s, 3.61
+    "qwen3.8-max": 0.864,  # 51.8 s, 3.93
+}
 # Fit decays per preference slot so the table's order survives scoring: the
 # first explicit id or the first preferred tier scores 1.0, later slots less.
 _TIER_FIT = {1: 1.0, 2: 0.75, 3: 0.5}
@@ -166,11 +184,36 @@ def _table_row(task: str, difficulty: int, features: RequestFeatures) -> _Row:
     if features.has_tools or task == "agentic_planning":
         return _Row(tiers=("t2_generalist", "t3_max"), reasoning=_NEEDS)
     if task in ("chat_casual", "factual_qa"):
+        # MEASURED 2026-11-14 (NAU-14 matrix), latency first with a quality
+        # floor of >= 3.8 mean per difficulty band: d<=1 deepseek-v4-flash
+        # (2.5-4.8 s, q 4.0; gemma4 as the measured runner-up), d==2 glm5.3
+        # (11.1 s, q 4.0; premium-gated, so deepseek-v4-flash follows), d==3
+        # gemma4 first (28.9 s, q 4.0), d>=4 deepseek-v4-flash first (13.7 s,
+        # q 4.0). Tiers stay as the fallback when the measured winners are
+        # not in the inventory.
         if difficulty <= 1:
-            return _Row(tiers=("t1_fast",), reasoning=_OFF)
+            return _Row(
+                ids=("deepseek-v4-flash", "gemma4"),
+                tiers=("t1_fast", "t2_generalist"),
+                reasoning=_OFF,
+            )
         if difficulty == 2:
-            return _Row(tiers=("t2_generalist",), reasoning=_OFF)
-        return _Row(tiers=("t2_generalist", "t3_max"), reasoning=_NEEDS)
+            return _Row(
+                ids=("glm5.3", "deepseek-v4-flash"),
+                tiers=("t2_generalist", "t1_fast"),
+                reasoning=_OFF,
+            )
+        if difficulty == 3:
+            return _Row(
+                ids=("gemma4", "deepseek-v4-flash"),
+                tiers=("t1_fast", "t2_generalist", "t3_max"),
+                reasoning=_NEEDS,
+            )
+        return _Row(
+            ids=("deepseek-v4-flash", "gemma4"),
+            tiers=("t2_generalist", "t3_max"),
+            reasoning=_NEEDS,
+        )
     if task == "translate_or_rewrite" and difficulty <= 2:
         return _Row(tiers=("t1_fast", "t2_generalist"), reasoning=_OFF)
     if task == "creative_writing":
@@ -209,10 +252,18 @@ def _level(on: bool, task: str, difficulty: int) -> str:
 
 
 def _bump(row: _Row) -> _Row:
-    """Spec 6.4: when in doubt, exactly one tier up — more capability, never less."""
-    tiers = tuple(_tier_up(tier) for tier in row.tiers)
+    """Spec 6.4: when in doubt, exactly one tier up — more capability, never less.
+
+    A row with explicit measured model ids drops them when bumped: keeping
+    the ids would make the bump invisible, since the id fit outranks any
+    tier. The bumped tiers then arbitrate among what the inventory has.
+    """
     if row.ids:
-        tiers = row.tiers + (() if "t3_max" in row.tiers else ("t3_max",))
+        tiers = tuple(_tier_up(tier) for tier in row.tiers)
+        if "t3_max" not in tiers:
+            tiers = tiers + ("t3_max",)
+        return replace(row, ids=(), tiers=tiers)
+    tiers = tuple(_tier_up(tier) for tier in row.tiers)
     return replace(row, tiers=tiers)
 
 
@@ -254,9 +305,17 @@ def _score(
     *,
     want_off: bool = False,
 ) -> float:
-    """`score = fit*q - latency*l - quota_penalty` (spec 7.3)."""
+    """`score = fit*q - latency*l - quota_penalty` (spec 7.3).
+
+    The latency term uses the NAU-14 measured per-model mean when the model
+    was measured (it replaced the tier priors the card mispredicted); un-
+    measured models fall back to their tier prior.
+    """
     fit = _fit(row, info)
-    latency = _LATENCY_BY_TIER.get(info.tier, _DEFAULT_LATENCY)
+    if info.id in _MEASURED_LATENCY_BY_MODEL:
+        latency = _MEASURED_LATENCY_BY_MODEL[info.id]
+    else:
+        latency = _LATENCY_BY_TIER.get(info.tier, _DEFAULT_LATENCY)
     state = health.get(info.id) if health is not None else None
     quota = _QUOTA_PENALTY if state is not None and state.failures > 0 else 0.0
     locked = _LOCKED_REASONING_PENALTY if want_off and not honours_off(info) else 0.0

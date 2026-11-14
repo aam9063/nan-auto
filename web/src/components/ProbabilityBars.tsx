@@ -1,4 +1,4 @@
-import { fmtPct } from "./format"
+import { fmtPct, fmtPctEs } from "./format"
 import type { ChoiceProbabilities, ScoreProbabilities } from "../types"
 
 interface BarRow {
@@ -20,10 +20,10 @@ export function ProbabilityBars({
   answer: ChoiceProbabilities | ScoreProbabilities | { yes: number; confidence: number }
 }) {
   const titles: Record<string, string> = {
-    task: "Task kind",
-    difficulty: "Difficulty",
-    needs_reasoning: "Needs reasoning",
-    expected_output_length: "Expected output length",
+    task: "Tipo de tarea",
+    difficulty: "Dificultad",
+    needs_reasoning: "Necesita razonamiento",
+    expected_output_length: "Longitud esperada de salida",
   }
   let rows: BarRow[]
   let subtitle: string | null
@@ -47,27 +47,29 @@ export function ProbabilityBars({
     return null
   }
   return (
-    <div className="rounded-md border border-neutral-800 bg-neutral-900/60 p-3">
+    <div className="rounded-lg border border-line bg-surface p-3">
       <div className="flex items-baseline justify-between gap-4">
-        <span className="text-sm font-medium text-neutral-200">
+        <span className="font-mono text-[13px] font-medium text-ink">
           {titles[questionId] ?? questionId}
         </span>
-        {subtitle != null && <span className="text-xs text-neutral-400">{subtitle}</span>}
-        <span className="ml-auto text-xs text-neutral-500">
-          confidence {fmtPct(confidence)}
+        {subtitle != null && (
+          <span className="font-mono text-xs text-muted">{subtitle}</span>
+        )}
+        <span className="ml-auto font-mono text-xs tabular-nums text-faint">
+          confianza {fmtPctEs(confidence)}
         </span>
       </div>
       <div className="mt-2 space-y-1.5">
         {rows.map((row) => (
           <div key={row.key} className="flex items-center gap-2 text-xs">
-            <span className="w-32 shrink-0 truncate text-neutral-300">{row.key}</span>
-            <div className="h-2 flex-1 overflow-hidden rounded-sm bg-neutral-800">
+            <span className="w-32 shrink-0 truncate text-body">{row.key}</span>
+            <div className="h-2 flex-1 overflow-hidden rounded-sm bg-canvas">
               <div
-                className="h-full rounded-sm bg-sky-500"
+                className="h-full rounded-sm bg-accent"
                 style={{ width: `${Math.max(0, Math.min(100, row.value * 100))}%` }}
               />
             </div>
-            <span className="w-12 shrink-0 text-right tabular-nums text-neutral-400">
+            <span className="w-12 shrink-0 text-right font-mono tabular-nums text-muted">
               {fmtPct(row.value)}
             </span>
           </div>
