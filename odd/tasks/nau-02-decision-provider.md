@@ -80,17 +80,36 @@ Fixtures: `server/tests/fixtures/clef/systemone_v1_{coding_debug,chat_casual_es,
 
 ## Tareas
 
-- [ ] NAU-02-T1 Tipos normalizados (`TaskAnswer`, `ScoreAnswer`, `NoulAnswer`, `Decision`) e interfaz `DecisionProvider`. Aceptación: el protocolo se importa y el mock lo satisface. Riesgo RDD: medio
-- [ ] NAU-02-T2 Parser contra las 3 fixtures, incluidos `legend` e índices string. Aceptación: un test por fixture lee `task`, `difficulty`, `needs_reasoning` y `expected_output_length` con los valores reales. Riesgo RDD: medio
-- [ ] NAU-02-T3 Cuestionario v1 y constructor de `state` acotado (600/200/150 tokens). Aceptación: snapshot del cuestionario y recorte de un mensaje largo. Riesgo RDD: medio
-- [ ] NAU-02-T4 Adaptador `nan`: semáforo, reintento en 429, timeout, errores tipados. Aceptación: tests con respx de 200, 429 y 401 y de timeout. Riesgo RDD: medio
-- [ ] NAU-02-T5 Adaptador `mock` por reglas. Aceptación: mismo contrato que `nan`, sin red. Riesgo RDD: bajo
+- [x] NAU-02-T1 Tipos normalizados (`ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `Decision`) e interfaz `DecisionProvider`. Aceptación: el protocolo se importa y el mock lo satisface. Riesgo RDD: medio
+- [x] NAU-02-T2 Parser contra las 3 fixtures, incluidos `legend` e índices string. Aceptación: un test por fixture lee `task`, `difficulty`, `needs_reasoning` y `expected_output_length` con los valores reales. Riesgo RDD: medio
+- [x] NAU-02-T3 Cuestionario v1 y constructor de `state` acotado (600/200/150 tokens). Aceptación: snapshot del cuestionario y recorte de un mensaje largo. Riesgo RDD: medio
+- [x] NAU-02-T4 Adaptador `nan`: semáforo, reintento en 429, timeout, errores tipados. Aceptación: tests con respx de 200, 429 y 401 y de timeout. Riesgo RDD: medio
+- [x] NAU-02-T5 Adaptador `mock` por reglas. Aceptación: mismo contrato que `nan`, sin red. Riesgo RDD: bajo
 
 ## Evidencia de verificación
 
 | Tarea | Prueba | Resultado | Commit |
 |---|---|---|---|
 | fixtures | 3 llamadas reales a `/v1/systemone` | 200, 452-570 ms | 0ebc3ea |
+| T1, T2 | `uv run pytest tests/test_clef_parser.py` | 9 passed (RED visto antes) | `feat(clef_client)` |
+| T3 | `uv run pytest tests/test_clef_questions.py` | 10 passed (RED visto antes) | `feat(clef_client)` |
+| T4, T5 | `uv run pytest tests/test_clef_provider.py` | 11 passed | `feat(clef_client)` |
+| suite | `uv run pytest` (server completo) | 35 passed | `feat(clef_client)` |
+| estático | `uv run ruff check .` + `uv run pyright` | 0 errores, 0 warnings | `feat(clef_client)` |
+| e2e real | `NanDecisionProvider` contra la API | 488 ms, `coding_debug_or_review`, level 3 Hard, reasoning on | — |
+
+### Nota de disciplina TDD
+
+T1/T2 y T3 vieron RED real antes de implementar. **T4/T5 no lo vieron**: escribí los
+tests y el adaptador antes de ejecutar. Para no dejar esa afirmación sin respaldo,
+apliqué dos mutaciones al adaptador:
+
+| Mutación | Test que la caza | Resultado |
+|---|---|---|
+| eliminar el reintento en 429 | `test_retries_immediately_on_429_then_succeeds` | falla |
+| semáforo sin límite | `test_never_exceeds_max_in_flight` | falla |
+
+Restaurado el código: 11 passed otra vez. Los tests muerden de verdad.
 
 ## Revisión nativa (RDD)
 
@@ -100,8 +119,11 @@ Fixtures: `server/tests/fixtures/clef/systemone_v1_{coding_debug,chat_casual_es,
 
 ## Progreso
 
-Fixtures capturadas y contrato verificado. Implementación pendiente.
+Implementación completa y verificada. Catálogo real reflejado en `config/models.yaml`
+(12 modelos de chat, 6 no-chat).
 
 ## Siguiente paso
 
-T1 y T2: tipos y parser contra fixtures.
+NAU-03: registro que fusiona `GET /v1/models` con `config/models.yaml`. El catálogo real
+ya demostró que hace falta: `flux-2-klein` y `qwen-image-2.1` se anuncian con
+`mode: chat` y son generadores de imagen, así que el registro no puede confiar en ese campo.
