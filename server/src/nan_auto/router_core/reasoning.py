@@ -65,3 +65,15 @@ def _effort(level: str) -> dict[str, object]:
     if level == _OFF:
         return {}
     return {"reasoning_effort": level}
+
+
+def honours_off(info: ModelInfo) -> bool:
+    """True when asking this model for `off` actually stops its reasoning.
+
+    Measured on 2026-11-14: `always_on` models ignore the request, `effort`
+    models keep reasoning at every level (deepseek-v4-flash spent 41 reasoning
+    tokens even with effort low), and an `unknown` switch means we have no
+    evidence that anything happens. Only the two togglable modes send an
+    explicit switch, so only those can be trusted to honour `off`.
+    """
+    return info.reasoning_mode in {"togglable", "togglable_default_off"}
