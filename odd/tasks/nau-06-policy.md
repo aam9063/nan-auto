@@ -74,19 +74,42 @@ Es el corazón del producto. Si el filtro deja pasar un modelo sin visión, la p
 
 ## Tareas
 
-- [ ] NAU-06-T1 Filtro por modalidad: imagen y audio solo van a modelos que los aceptan. Aceptación: con `has_image`, `glm5.3` (solo texto) queda fuera con motivo. Riesgo RDD: medio
-- [ ] NAU-06-T2 Filtro por contexto: `est_tokens` por encima de `max_input_tokens` descarta. Aceptación: un prompt gigante deja fuera al modelo pequeño. Riesgo RDD: medio
-- [ ] NAU-06-T3 Filtro por tools y formato: con `tools`, los modelos de tool calling XML se penalizan; con `json_schema`, se descarta quien no lo soporta. Aceptación: ambos casos con motivo explícito. Riesgo RDD: medio
-- [ ] NAU-06-T4 Premium y exclusión por perfil: `nan-auto-fast` no usa premium; `excluded` nunca se elige. Aceptación: tres perfiles con el mismo inventario dan candidatos distintos. Riesgo RDD: medio
-- [ ] NAU-06-T5 Tabla de decisión v1 completa, fila por fila. Aceptación: una prueba por fila de la tabla del spec. Riesgo RDD: medio
-- [ ] NAU-06-T6 Regla "ante la duda, subir": `task.confidence < 0.60` o dificultad repartida suben un escalón. Aceptación: dos casos, cada uno sube exactamente uno. Riesgo RDD: medio
-- [ ] NAU-06-T7 Puntuación y elección: `score = fit*q - latency*l - quota_penalty`, con el motivo legible y el fallo abierto al modelo por defecto. Aceptación: el orden de candidatos es estable y reproducible. Riesgo RDD: medio
+- [x] NAU-06-T1 Filtro por modalidad: imagen y audio solo van a modelos que los aceptan. Aceptación: con `has_image`, `glm5.3` (solo texto) queda fuera con motivo. Riesgo RDD: medio
+- [x] NAU-06-T2 Filtro por contexto: `est_tokens` por encima de `max_input_tokens` descarta. Aceptación: un prompt gigante deja fuera al modelo pequeño. Riesgo RDD: medio
+- [x] NAU-06-T3 Filtro por tools y formato: con `tools`, los modelos de tool calling XML se penalizan; con `json_schema`, se descarta quien no lo soporta. Aceptación: ambos casos con motivo explícito. Riesgo RDD: medio
+- [x] NAU-06-T4 Premium y exclusión por perfil: `nan-auto-fast` no usa premium; `excluded` nunca se elige. Aceptación: tres perfiles con el mismo inventario dan candidatos distintos. Riesgo RDD: medio
+- [x] NAU-06-T5 Tabla de decisión v1 completa, fila por fila. Aceptación: una prueba por fila de la tabla del spec. Riesgo RDD: medio
+- [x] NAU-06-T6 Regla "ante la duda, subir": `task.confidence < 0.60` o dificultad repartida suben un escalón. Aceptación: dos casos, cada uno sube exactamente uno. Riesgo RDD: medio
+- [x] NAU-06-T7 Puntuación y elección: `score = fit*q - latency*l - quota_penalty`, con el motivo legible y el fallo abierto al modelo por defecto. Aceptación: el orden de candidatos es estable y reproducible. Riesgo RDD: medio
 
 ## Evidencia de verificación
 
 | Tarea | Prueba | Resultado | Commit |
 |---|---|---|---|
-| — | pendiente | — | — |
+| T1 | `uv run pytest tests/test_capabilities.py` | RED de colección (`No module named 'nan_auto.router_core.capabilities'`) → 4 passed | `feat(router_core)` |
+| T2 | idem | RED: caso de contexto gigante fallando al retirar la regla | `feat(router_core)` |
+| T3 | idem | RED: `TypeError` por kwarg `card` ausente; expuso que un modelo penalizado por XML debe figurar en `rejected` | `feat(router_core)` |
+| T4 | idem | RED: 8 `TypeError` por kwargs de perfil/salud | 20 passed | `feat(router_core)` |
+| T5 | `uv run pytest tests/test_policy.py` | RED de colección; luego 3 tests propios mal escritos (`on` vs nivel abstracto `high`) | `feat(router_core)` |
+| T6 | idem | RED: 2 casos de subida de escalón | `feat(router_core)` |
+| T7 | idem | RED: 2 casos de ranking y penalización por cuota | `feat(router_core)` |
+| suite | `uv run pytest` | 131 → **170 passed** | `feat(router_core)` |
+| estático | `ruff check .` + `pyright` | 0 errores, 0 warnings | `feat(router_core)` |
+
+### Extremo a extremo con Clef real y catálogo real
+
+| Petición | Clef | Candidatos | Elegido | reason |
+|---|---|---|---|---|
+| "Holaaa, qué tal el finde" | `chat_casual` d=1 | 10 | `glm5.3-flash` | `chat_casual d=1 reasoning=off` |
+| bug de pytest difícil | `coding_debug_or_review` d=3 | 11 | `qwen3.6` | `coding_debug_or_review d=3 reasoning=on` |
+| audio de reunión | `summarize_or_extract` d=2 | **1** | `mimo-v2.6-flash` | todo lo demás descartado por `no_audio_support` |
+
+### Decisiones abiertas (hipótesis, no defectos)
+
+- **El escalón T3 casi nunca gana con la configuración actual.** Para `coding_debug_or_review` d=3 el spec dice "T2 o T3" y la elección cae en `qwen3.6` (T2) porque las constantes de latencia favorecen T2. La lectura es válida, pero si se quiere que una tarea *Difícil* use el modelo premium hay que tocar constantes o la fila de la tabla. Lo sustituye la matriz medida de NAU-14.
+- Constantes de puntuación (`[HIPÓTESIS]` en el código): prior de latencia por escalón 0.2/0.4/0.6, decaimiento de `fit` 0.85/0.75, umbral de contexto largo 100k, `quota_penalty` 0.25.
+- `json_schema` se detecta por la nota literal de la ficha (`json_schema unsupported`) porque `ModelInfo` no tiene campo `notes`.
+- Filas de la tabla que el spec no cubre (chat d≥3, debug d≤1, tareas desconocidas) caen a escalones T2/T3 con razonamiento según `needs_reasoning`.
 
 ## Revisión nativa (RDD)
 
@@ -96,8 +119,8 @@ Es el corazón del producto. Si el filtro deja pasar un modelo sin visión, la p
 
 ## Progreso
 
-Documento abierto.
+NAU-06 implementada, verificada contra Clef real y catálogo real, pendiente de merge.
 
 ## Siguiente paso
 
-T1 a T7.
+NAU-09: adaptador de razonamiento, que traduce el nivel abstracto (`off`/`low`/`medium`/`high`) al parámetro de cada modelo.
