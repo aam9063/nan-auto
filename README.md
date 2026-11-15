@@ -2,7 +2,7 @@
 
 > Un endpoint OpenAI-compatible. **Clef decide, por petición, qué modelo de NaN responde y con cuánto razonamiento.**
 
-<video src="demo/NaN-Auto-Demo.mp4" controls muted playsinline width="100%"></video>
+<video src="https://github.com/aam9063/nan-auto/releases/download/demo-v1/NaN-Auto-Demo.mp4" controls muted playsinline width="100%"></video>
 
 *La demo: Clef decide por petición, el router sirve con fallback y el dashboard lo muestra en vivo.*
 
