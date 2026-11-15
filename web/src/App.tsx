@@ -78,7 +78,7 @@ export default function App() {
           </div>
           <nav
             aria-label="Pantallas del dashboard"
-            className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-1 md:flex-col md:px-0 md:pb-0"
+            className="no-scrollbar flex shrink-0 gap-1 overflow-x-auto pb-1 md:flex-1 md:flex-col md:pb-0"
           >
             {TABS.map((entry) => (
               <button

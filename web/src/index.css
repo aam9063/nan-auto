@@ -50,6 +50,13 @@ body {
   background: var(--color-canvas);
 }
 
+/* No component may widen the document: `clip` (unlike `hidden`) does not
+   create a scroll container, so the sticky sidebar keeps working, and inner
+   overflow-x-auto strips still scroll on their own. */
+body {
+  overflow-x: clip;
+}
+
 /* Everything clickable points: Tailwind v4 no longer sets pointer on buttons,
    and selectable table rows / chips act as buttons without being <button>. */
 button:not(:disabled),
