@@ -65,10 +65,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-canvas text-body">
       <div className="mx-auto flex max-w-[1440px] flex-col md:flex-row">
-        <aside className="flex w-full shrink-0 flex-col border-b border-line bg-sidebar md:sticky md:top-0 md:h-screen md:w-[250px] md:flex-row md:items-stretch md:border-r md:border-b-0 md:px-4 md:py-6">
+        <aside className="flex w-full shrink-0 flex-col border-b border-line bg-sidebar px-4 py-3 md:sticky md:top-0 md:h-screen md:w-[250px] md:border-r md:border-b-0 md:px-4 md:py-6">
           {/* Mobile: brand row + a horizontally scrollable tab strip below.
-              Desktop: the sidebar as before. */}
-          <div className="flex items-center gap-3 px-4 py-3 md:mb-8 md:px-2 md:py-0">
+              Desktop: the same column as the classic sidebar. */}
+          <div className="flex items-center gap-3 md:mb-8 md:px-2">
             <span className="flex size-10 items-center justify-center rounded-xl bg-accent">
               <NodesIcon />
             </span>
@@ -78,7 +78,7 @@ export default function App() {
           </div>
           <nav
             aria-label="Pantallas del dashboard"
-            className="no-scrollbar flex gap-1 overflow-x-auto px-4 pb-3 md:flex-1 md:flex-col md:px-0 md:pb-0"
+            className="no-scrollbar -mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-1 md:flex-col md:px-0 md:pb-0"
           >
             {TABS.map((entry) => (
               <button
