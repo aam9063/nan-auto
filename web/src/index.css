@@ -43,6 +43,13 @@
   color-scheme: light;
 }
 
+/* The canvas covers the whole document, not just the app column: phone
+   browsers overscroll and tool screenshots otherwise show a dark backdrop. */
+html,
+body {
+  background: var(--color-canvas);
+}
+
 /* Everything clickable points: Tailwind v4 no longer sets pointer on buttons,
    and selectable table rows / chips act as buttons without being <button>. */
 button:not(:disabled),
