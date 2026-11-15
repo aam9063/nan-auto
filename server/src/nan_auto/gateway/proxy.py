@@ -54,6 +54,7 @@ from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.errors import ClefError
 from nan_auto.clef_client.questions import build_questions, build_state
 from nan_auto.clef_client.types import Decision
+from nan_auto.gateway.clef_call import ClefOutcome
 from nan_auto.gateway.events import DecisionBus, decision_payload
 from nan_auto.gateway.fallback import CircuitBreaker, ConcurrencyLimiter
 from nan_auto.gateway.log_store import (
@@ -138,6 +139,7 @@ def proxy_router(
         await registry.refresh_if_stale()
         decision = None
         clef_latency_ms = 0
+        clef_outcome: ClefOutcome | None = None
         last_user_text = _last_user_text(outbound)
         if last_user_text:
             clef_started = time.perf_counter()
@@ -146,15 +148,21 @@ def proxy_router(
                     last_user_text, system_prompt=_system_prompt(outbound), turns=features.turns
                 )
                 decision = await provider.decide(state=state, questions=build_questions())
-            except ClefError, ValueError:
+            except (ClefError, ValueError) as clef_failure:
                 decision = None  # fail open (spec 5.3): the default model still answers
+                # The cause reaches the client through the reason header: a
+                # rejected key must not masquerade as Clef downtime.
+                clef_outcome = ClefOutcome(None, clef_failure)
             finally:
                 clef_latency_ms = _elapsed_ms(clef_started)
 
         if decision is None:
             model = settings.default_model
             level = "off"
-            reason = f"clef_unavailable fallback={model}"
+            if clef_outcome is not None:
+                reason = clef_outcome.fail_open_reason
+            else:
+                reason = "clef_unavailable"
             # Fail open (spec 5.3): only the default model can answer.
             chain: tuple[str, ...] = (settings.default_model,)
         else:

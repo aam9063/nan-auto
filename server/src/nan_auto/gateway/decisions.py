@@ -26,6 +26,7 @@ from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.errors import ClefError
 from nan_auto.clef_client.questions import build_questions, build_state
 from nan_auto.clef_client.types import Decision
+from nan_auto.gateway.clef_call import ClefOutcome
 from nan_auto.gateway.events import DecisionBus, decision_payload
 from nan_auto.gateway.log_store import DecisionLogEntry, DecisionLogStore
 from nan_auto.gateway.proxy import _last_user_text, _system_prompt
@@ -175,6 +176,7 @@ def playground_router(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
         decision = None
+        clef_outcome: ClefOutcome | None = None
         last_user_text = _last_user_text(outbound)
         if last_user_text:
             try:
@@ -182,13 +184,14 @@ def playground_router(
                     last_user_text, system_prompt=_system_prompt(outbound), turns=features.turns
                 )
                 decision = await provider.decide(state=state, questions=build_questions())
-            except ClefError, ValueError:
+            except (ClefError, ValueError) as clef_failure:
                 decision = None  # fail open (spec 5.3): the default model still answers
+                clef_outcome = ClefOutcome(None, clef_failure)
 
         if decision is None:
             model = settings.default_model
             level = "off"
-            reason = f"clef_unavailable fallback={model}"
+            reason = clef_outcome.fail_open_reason if clef_outcome else "clef_unavailable"
             source = "fallback"
             candidates: tuple[str, ...] = (model,)
             rejected: dict[str, str] = {}

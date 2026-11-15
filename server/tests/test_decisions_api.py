@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from httpx import ASGITransport
 
-from nan_auto.clef_client.errors import ClefError
+from nan_auto.clef_client.errors import ClefAuthError, ClefError
 from nan_auto.clef_client.types import ChoiceAnswer, Decision, NoulAnswer, ScoreAnswer
 from nan_auto.gateway.app import create_app
 from nan_auto.gateway.log_store import (
@@ -255,6 +255,38 @@ async def test_playground_fails_open_without_clef(tmp_path: Any) -> None:  # noq
     assert body["decision_source"] == "fallback"
     assert body["probabilities"] == {}
     assert body["rejected"] == []
+
+
+async def test_fail_open_reason_names_the_cause_generic_clef_error() -> None:
+    """The fail-open reason says why Clef was skipped, not just that it was."""
+    provider = StaticProvider(error=ClefError("clef down"))
+    app = make_app(provider=provider)
+    response = await call(
+        app,
+        "POST",
+        "/v1/playground/decide",
+        json={"messages": [{"role": "user", "content": "hello there"}]},
+    )
+    assert response.json()["reason"] == "clef_error: clef down"
+
+
+async def test_fail_open_reason_says_auth_when_clef_rejects_the_key() -> None:
+    """A rejected key is a different incident from a dead Clef: say so.
+
+    Both fail open to the same default model, but the dashboard shows the
+    reason verbatim — an auth failure must not masquerade as downtime.
+    """
+    provider = StaticProvider(error=ClefAuthError("Clef rejected the API key (401)"))
+    app = make_app(provider=provider)
+    response = await call(
+        app,
+        "POST",
+        "/v1/playground/decide",
+        json={"messages": [{"role": "user", "content": "hello there"}]},
+    )
+    body = response.json()
+    assert body["decision_source"] == "fallback"
+    assert body["reason"] == "clef_auth_error: Clef rejected the API key (401)"
 
 
 async def test_playground_rejects_a_body_without_messages() -> None:
