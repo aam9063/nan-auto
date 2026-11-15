@@ -60,6 +60,15 @@ label:has(> input[type="checkbox"]) {
   outline-offset: 2px;
 }
 
+/* The mobile tab strip scrolls horizontally without a visible scrollbar;
+   the scroll affordance is the cut-off label, not a scrollbar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Transitions are decorative only; reduced-motion users get a flat UI. */
 @media (prefers-reduced-motion: reduce) {
   *,

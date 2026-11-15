@@ -65,8 +65,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-canvas text-body">
       <div className="mx-auto flex max-w-[1440px] flex-col md:flex-row">
-        <aside className="flex w-full shrink-0 flex-row items-center gap-3 border-b border-line bg-sidebar px-4 py-3 md:sticky md:top-0 md:h-screen md:w-[250px] md:flex-col md:items-stretch md:gap-0 md:border-r md:border-b-0 md:px-4 md:py-6">
-          <div className="flex items-center gap-3 md:mb-8 md:px-2">
+        <aside className="flex w-full shrink-0 flex-col border-b border-line bg-sidebar md:sticky md:top-0 md:h-screen md:w-[250px] md:flex-row md:items-stretch md:border-r md:border-b-0 md:px-4 md:py-6">
+          {/* Mobile: brand row + a horizontally scrollable tab strip below.
+              Desktop: the sidebar as before. */}
+          <div className="flex items-center gap-3 px-4 py-3 md:mb-8 md:px-2 md:py-0">
             <span className="flex size-10 items-center justify-center rounded-xl bg-accent">
               <NodesIcon />
             </span>
@@ -76,7 +78,7 @@ export default function App() {
           </div>
           <nav
             aria-label="Pantallas del dashboard"
-            className="flex flex-1 gap-1 md:flex-col"
+            className="no-scrollbar flex gap-1 overflow-x-auto px-4 pb-3 md:flex-1 md:flex-col md:px-0 md:pb-0"
           >
             {TABS.map((entry) => (
               <button
@@ -84,7 +86,7 @@ export default function App() {
                 type="button"
                 onClick={() => setTab(entry.id)}
                 aria-current={tab === entry.id ? "page" : undefined}
-                className={`flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
+                className={`flex shrink-0 cursor-pointer items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-colors ${
                   tab === entry.id
                     ? "bg-accent-soft font-semibold text-accent"
                     : "text-body hover:bg-canvas hover:text-ink"
@@ -122,7 +124,7 @@ export default function App() {
 
         <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
           <p className="text-xs text-faint">Gateway · nan-auto</p>
-          <h1 className="mb-6 mt-1 text-[28px] font-semibold tracking-tight text-ink">
+          <h1 className="mb-6 mt-1 text-2xl font-semibold tracking-tight text-ink md:text-[28px]">
             {TITLES[tab]}
           </h1>
           {tab === "playground" && (
