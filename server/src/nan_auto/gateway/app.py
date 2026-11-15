@@ -1,7 +1,10 @@
 """Minimal FastAPI application for the NaN Auto gateway scaffold."""
 
+from pathlib import Path
+
 import httpx
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from nan_auto.clef_client.base import DecisionProvider
 from nan_auto.clef_client.mock import MockDecisionProvider
@@ -15,6 +18,9 @@ from nan_auto.registry.router import registry_router
 from nan_auto.registry.state import Registry
 from nan_auto.schema.alias import ROUTER_ALIASES
 from nan_auto.settings import Settings
+
+# Built dashboard next to the repo root (`web/dist`); absent in a bare checkout.
+DEFAULT_DIST_DIR = Path(__file__).resolve().parents[4] / "web" / "dist"
 
 
 def default_registry(settings: Settings | None = None) -> Registry:
@@ -53,6 +59,19 @@ def default_provider(settings: Settings, client: httpx.AsyncClient) -> DecisionP
             timeout=settings.decision_timeout_ms / 1000,
         )
     return MockDecisionProvider()
+
+
+def mount_dashboard(app: FastAPI, dist: Path | None = None) -> None:
+    """Serve the built dashboard from `dist` when it exists.
+
+    Container deploys (NaN Cloud Spaces) run one process: the SPA calls the API
+    over relative `/v1` paths, so same-origin needs no CORS. Mounted after the
+    API routers, so `/v1/*` always wins; `html=True` serves `index.html` at `/`.
+    """
+
+    dist = dist or DEFAULT_DIST_DIR
+    if dist.is_dir():
+        app.mount("/", StaticFiles(directory=dist, html=True), name="dashboard")
 
 
 def create_app(
@@ -94,6 +113,7 @@ def create_app(
     app.include_router(playground_router(registry, provider, settings))
     app.include_router(proxy_router(registry, provider, settings, client, store, bus=bus))
     app.state.decision_bus = bus
+    mount_dashboard(app)
     return app
 
 
