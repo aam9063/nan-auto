@@ -36,9 +36,12 @@ WORKDIR /app/server
 COPY --from=server-build /app/server /app/server
 COPY config/ /app/config/
 COPY --from=web-build /build/web/dist /app/web/dist
+# The decision log is created at runtime: the image user must own the app tree
+# (a root-owned COPY would make sqlite fail with "unable to open database file").
+RUN mkdir -p /app/server/data && chown -R appuser:appuser /app
 ENV PATH="/app/server/.venv/bin:$PATH" \
     PORT=3000 \
-    DECISION_DB_PATH=/app/server/dev_decisions.sqlite
+    DECISION_DB_PATH=/app/server/data/dev_decisions.sqlite
 USER appuser
 EXPOSE 3000
 CMD ["python", "serve.py"]

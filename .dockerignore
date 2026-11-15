@@ -9,10 +9,10 @@
 **/.venv
 **/node_modules
 web/dist
-*.sqlite
-*.sqlite3
-*.db
-*.log
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/*.log
 .env
 .env.*
 demo
