@@ -1,3 +1,10 @@
+<a href="https://nan.builders/?ref=built-with-nan">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="https://nan.builders/badge/built-with-nan-light.svg">
+    <img width="266" src="https://nan.builders/badge/built-with-nan-dark.svg" alt="Built with NaN">
+  </picture>
+</a>
+
 # NaN Auto
 
 > Un endpoint OpenAI-compatible. **Clef decide, por petición, qué modelo de NaN responde y con cuánto razonamiento.**
@@ -230,3 +237,5 @@ nan-auto/
 ## Créditos
 
 Construido para la #2 NaN Hackathon «Decide con Clef». Gateway y router en Python, dashboard en React, benchmark estilo RouterBench, y Clef decidiendo — como debe ser.
+
+[![Built with NaN](https://nan.builders/badge/built-with-nan-compact.svg)](https://nan.builders/?ref=built-with-nan)
