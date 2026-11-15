@@ -2,9 +2,9 @@
 
 > Un endpoint OpenAI-compatible. **Clef decide, por petición, qué modelo de NaN responde y con cuánto razonamiento.**
 
-<video src="https://github.com/aam9063/nan-auto/releases/download/demo-v1/NaN-Auto-Demo.mp4" controls muted playsinline width="100%"></video>
+[![Demo de NaN Auto](demo/NaN-Auto-Demo.gif)](https://github.com/aam9063/nan-auto/releases/download/demo-v1/NaN-Auto-Demo.mp4)
 
-*La demo: Clef decide por petición, el router sirve con fallback y el dashboard lo muestra en vivo.*
+*La demo (GIF; video completo en el release [demo-v1](https://github.com/aam9063/nan-auto/releases/tag/demo-v1)): Clef decide por petición, el router sirve con fallback y el dashboard lo muestra en vivo.*
 
 `model: "nan-auto"` en cualquier cliente compatible con OpenAI (Cursor, OpenCode, Cline, Open WebUI, SDK de OpenAI): solo hay que cambiar la base URL. Detrás, el gateway extrae características deterministas de la petición, filtra por capacidades, le pregunta a **Clef** por la semántica, puntúa los candidatos y entrega la respuesta en streaming con fallback.
 
